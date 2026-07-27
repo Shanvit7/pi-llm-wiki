@@ -285,14 +285,94 @@ function embeddingsRequestPath(basePath: string): string {
 }
 
 interface EmbeddingApiResponse {
-  data?: Array<{ index: number; embedding: number[] }>;
+  data?: Array<{ index?: number; embedding: number[] }>;
   error?: { message?: string };
+  /** Some OpenAI-compatible gateways (e.g. GSA USAi / Vertex) nest errors here. */
+  detail?: unknown;
+}
+
+/**
+ * Max inputs per embeddings request. Providers cap batch size server-side
+ * (OpenAI 2048, Google Vertex `text-embedding-*` 250, Cohere v3 96); we chunk
+ * under the smallest common limit so a reindex of hundreds of pages never
+ * overruns the cap. Exported so tests and callers can reference the default.
+ */
+export const DEFAULT_MAX_EMBED_BATCH = 96;
+
+/**
+ * Approx per-request character budget. Providers also cap *total tokens* per
+ * request (Google Vertex `text-embedding-*` = 20,000 tokens). Tokenizing here
+ * would add a dependency, so we approximate with a conservative char budget
+ * (~2.8 chars/token observed for wiki prose, with headroom) — the request
+ * stays well under the token cap without counting tokens.
+ */
+export const DEFAULT_MAX_EMBED_BATCH_CHARS = 45_000;
+
+/**
+ * Split `texts` into batches that stay under BOTH a count cap and a total
+ * char budget. A single oversized text is emitted as its own batch rather than
+ * dropped, so every input is always embedded. Pure — unit-testable with no
+ * network.
+ */
+export function chunkByBudget(texts: string[], maxCount: number, maxChars: number): string[][] {
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let chars = 0;
+  for (const text of texts) {
+    // Close the current batch before adding a text that would exceed either
+    // cap — but never emit an empty batch (an oversized text stands alone).
+    if (batch.length > 0 && (batch.length >= maxCount || chars + text.length > maxChars)) {
+      batches.push(batch);
+      batch = [];
+      chars = 0;
+    }
+    batch.push(text);
+    chars += text.length;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
+/**
+ * Parse an OpenAI-compatible embeddings response into row-ordered vectors,
+ * throwing on any error shape so failures are never silently stored as empty
+ * vectors. Handles gateways that report errors via a nested `detail` field
+ * (GSA USAi / Vertex) or via HTTP status alone, and providers that omit the
+ * per-row `index` (returning rows in request order). Pure — unit-testable.
+ */
+export function parseEmbeddingResponse(
+  status: number,
+  body: EmbeddingApiResponse,
+  expectedCount: number,
+): number[][] {
+  if (body.error || body.detail !== undefined || status < 200 || status >= 300) {
+    const message =
+      body.error?.message ??
+      (typeof body.detail === "string"
+        ? body.detail
+        : body.detail !== undefined
+          ? JSON.stringify(body.detail)
+          : `HTTP ${status}`);
+    throw new Error(`embedding API error: ${message}`);
+  }
+  const rows = body.data ?? [];
+  if (rows.length !== expectedCount) {
+    throw new Error(`embedding API returned ${rows.length} vectors for ${expectedCount} inputs`);
+  }
+  const ordered = rows.every((r) => typeof r.index === "number")
+    ? [...rows].sort((a, b) => (a.index as number) - (b.index as number))
+    : rows;
+  return ordered.map((r) => r.embedding);
 }
 
 /**
  * Create an `EmbedFn` backed by an OpenAI-compatible `/v1/embeddings`
  * endpoint. Uses node's http/https directly (no SDK) so it works against
  * OpenAI, Azure (with an api-key header), or any compatible gateway.
+ *
+ * Inputs are split into batches under both the instance-count and total-char
+ * caps (see `chunkByBudget`) and re-joined in request order, so provider batch
+ * limits never truncate a reindex. Any request error is thrown, not swallowed.
  */
 export function createOpenAIEmbedFn(cfg: {
   apiKey: string;
@@ -306,7 +386,7 @@ export function createOpenAIEmbedFn(cfg: {
   const useHttp = parsed.protocol === "http:";
   const port = parsed.port ? Number(parsed.port) : undefined;
 
-  return (texts) =>
+  const embedBatch = (texts: string[]): Promise<number[][]> =>
     new Promise<number[][]>((resolve, reject) => {
       if (texts.length === 0) {
         resolve([]);
@@ -333,17 +413,17 @@ export function createOpenAIEmbedFn(cfg: {
             data += chunk.toString();
           });
           res.on("end", () => {
+            let parsedBody: EmbeddingApiResponse;
             try {
-              const parsedBody = JSON.parse(data) as EmbeddingApiResponse;
-              if (parsedBody.error) {
-                reject(new Error(`embedding API error: ${parsedBody.error.message ?? "unknown"}`));
-                return;
-              }
-              const rows = parsedBody.data ?? [];
-              const sorted = [...rows].sort((a, b) => a.index - b.index);
-              resolve(sorted.map((d) => d.embedding));
+              parsedBody = JSON.parse(data) as EmbeddingApiResponse;
             } catch (err) {
               reject(new Error(`failed to parse embedding response: ${(err as Error).message}`));
+              return;
+            }
+            try {
+              resolve(parseEmbeddingResponse(res.statusCode ?? 0, parsedBody, texts.length));
+            } catch (err) {
+              reject(err as Error);
             }
           });
         },
@@ -352,6 +432,18 @@ export function createOpenAIEmbedFn(cfg: {
       req.write(body);
       req.end();
     });
+
+  return async (texts) => {
+    const out: number[][] = [];
+    for (const batch of chunkByBudget(
+      texts,
+      DEFAULT_MAX_EMBED_BATCH,
+      DEFAULT_MAX_EMBED_BATCH_CHARS,
+    )) {
+      out.push(...(await embedBatch(batch)));
+    }
+    return out;
+  };
 }
 
 /**

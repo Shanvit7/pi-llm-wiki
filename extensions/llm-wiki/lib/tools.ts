@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { launchEmbedPages, reindexEmbeddings, resolveEmbedder } from "./embeddings.js";
@@ -390,7 +390,11 @@ export function registerWikiIngest(pi: ExtensionAPI, runtime?: Runtime): void {
         const manifestPath = join(paths.rawSources, id, "manifest.json");
         const extracted = existsSync(extractedPath) ? readFileSync(extractedPath, "utf-8") : "";
         const manifest = readJson<Record<string, unknown>>(manifestPath, {});
-        return { id, extracted, manifest };
+        // Vault-relative path used in tool messages so the read tool can open
+        // the file from the vault root (fix #101: agent previously got
+        // "raw/sources/..." and failed on new-layout vaults).
+        const relRaw = relative(paths.root, paths.rawSources);
+        return { id, extracted, manifest, relRaw };
       });
 
       // ── Background synthesis (issue #65) ──────────────────
@@ -474,7 +478,7 @@ export function registerWikiIngest(pi: ExtensionAPI, runtime?: Runtime): void {
                 [
                   `- **${s.id}**: ${s.manifest.title || s.id}`,
                   `  - Extracted: ${s.extracted.length} chars`,
-                  `  - Read: \`raw/sources/${s.id}/extracted.md\``,
+                  `  - Read: \`${s.relRaw}/${s.id}/extracted.md\``,
                 ].join("\n"),
               ),
               "",

@@ -33,6 +33,14 @@ export function appendWikiStatus(systemPrompt: string): string {
   return `${base}\n\n${WIKI_STATUS_BLOCK}`;
 }
 
+/** Normalize upstream Pi and OMP system-prompt representations. */
+export function normalizeSystemPrompt(
+  systemPrompt: string | readonly string[] | null | undefined,
+): string {
+  if (Array.isArray(systemPrompt)) return systemPrompt.join("\n\n");
+  return typeof systemPrompt === "string" ? systemPrompt : "";
+}
+
 /** customType of the hidden tail message carrying volatile per-turn context. */
 export const WIKI_RECALL_MESSAGE_TYPE = "wiki-recall-context";
 
@@ -69,10 +77,10 @@ export interface AgentStartInjection {
  * Pure and side-effect free — see test/agent-start-injection.test.ts.
  */
 export function buildAgentStartInjection(
-  baseSystemPrompt: string,
+  baseSystemPrompt: string | readonly string[] | null | undefined,
   dynamicBlocks: Array<string | undefined>,
 ): AgentStartInjection {
-  const systemPrompt = appendWikiStatus(baseSystemPrompt);
+  const systemPrompt = appendWikiStatus(normalizeSystemPrompt(baseSystemPrompt));
   const content = dynamicBlocks
     .map((b) => b?.trim())
     .filter((b): b is string => Boolean(b))

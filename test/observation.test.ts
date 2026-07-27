@@ -312,7 +312,7 @@ describe("registerObservationReminder — retry deduplication", () => {
     expect(messages).toHaveLength(2);
   });
 
-  it("resets state on session_compact", async () => {
+  it("resets turn counter on session_compact but preserves observeDoneThisSession", async () => {
     const { pi, emit, messages } = createMockPi();
     const state = createReminderState();
     registerObservationReminder(pi, state, { turnsBetweenReminders: 1 });
@@ -322,7 +322,24 @@ describe("registerObservationReminder — retry deduplication", () => {
 
     await emit("session_compact");
 
-    // State reset — reminder fires again
+    // Compaction must NOT resurrect the nag — observeDoneThisSession preserved
+    await emit("agent_end", {});
+    expect(messages).toHaveLength(1);
+  });
+
+  it("allows reminder to resume after session_compact when observe not done", async () => {
+    const { pi, emit, messages } = createMockPi();
+    const state = createReminderState();
+    registerObservationReminder(pi, state, { turnsBetweenReminders: 1 });
+
+    // 1 turn fires reminder
+    await emit("agent_end", {});
+    expect(messages).toHaveLength(1);
+
+    // Counter stays at 1, compact resets it
+    await emit("session_compact");
+
+    // Counter = 0, next turn = 1 → fires again
     await emit("agent_end", {});
     expect(messages).toHaveLength(2);
   });

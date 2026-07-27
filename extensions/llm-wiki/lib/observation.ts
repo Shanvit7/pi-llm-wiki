@@ -348,10 +348,11 @@ export function registerObservationReminder(
     reminderState.observeDoneThisSession = false;
   });
 
-  // After compaction, reset the reminder state so reminders resume
+  // After compaction, reset turn counter so reminders resume
+  // BUT preserve observeDoneThisSession — if the model already called
+  // wiki_observe this session, compaction should not resurrect the nag.
   pi.on("session_compact", async () => {
     turnsSinceLastReminder = 0;
-    reminderState.observeDoneThisSession = false;
   });
 
   pi.on("agent_end", async (event, _ctx) => {

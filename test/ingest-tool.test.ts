@@ -143,4 +143,18 @@ describe("wiki_ingest background dispatch", () => {
     const res = await tool.execute("id", { background: true }, undefined, undefined, ctx);
     expect(res.content[0].text as string).toContain("Next steps");
   });
+
+  it("returns a vault-relative path that works for the read tool (#101)", async () => {
+    const tool = captureIngestTool(undefined);
+    const { ctx } = makeCtx(wikiDir);
+    const res = await tool.execute("id", { background: false }, undefined, undefined, ctx);
+    const text = res.content[0].text as string;
+
+    // Must include .llm-wiki/raw/sources (new layout) so agent can run:
+    // read `.llm-wiki/raw/sources/SRC-001/extracted.md` from the vault root. Previously it
+    // returned only `raw/sources/SRC-001/extracted.md`, which failed on new-layout vaults (#101).
+    expect(text).toContain(".llm-wiki/raw/sources/SRC-001/extracted.md");
+    // Must not use the bare, ambiguous prefix.
+    expect(text).not.toContain("`raw/sources/SRC-001/extracted.md`");
+  });
 });

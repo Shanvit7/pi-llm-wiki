@@ -19,7 +19,7 @@ $ARGUMENTS
 2. If the tool reports "All sources ingested", inform the user and stop.
 3. **If the tool reports it is ingesting in the background**, the synthesis sub-agent is handling those sources on the configured task model. Do NOT synthesize them yourself — just report which sources were dispatched and stop. (You'll be notified as each completes.)
 4. **Otherwise** (the tool returned extracted content — background unavailable or `background=false`), for each source in the returned batch:
-   a. Read the extracted text from `raw/sources/<SOURCE_ID>/extracted.md`
+   a. Read the extracted text from `.llm-wiki/raw/sources/<SOURCE_ID>/extracted.md`
    b. Update the skeleton source page in `wiki/sources/` with a proper summary, key entities, and concepts
    c. Use `wiki_ensure_page(type=entity, title=<name>)` for each new entity (people, orgs, tools, products)
    d. Use `wiki_ensure_page(type=concept, title=<name>)` for each new concept (ideas, patterns, frameworks)

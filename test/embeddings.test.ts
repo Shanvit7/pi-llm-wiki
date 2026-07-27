@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type EmbeddingStore,
   buildEmbeddingText,
+  chunkByBudget,
   contentHash,
   cosineSimilarity,
   embedPages,
   embeddingStorePath,
   isStale,
   normalizeVector,
+  parseEmbeddingResponse,
   readEmbeddingStore,
   reindexEmbeddings,
   resolveEmbedder,
@@ -293,5 +295,126 @@ describe("embeddingStorePath", () => {
   it("lives in the meta sidecar dir", () => {
     const paths = getVaultPaths("/tmp/x");
     expect(embeddingStorePath(paths)).toBe(join(paths.meta, "embeddings.json"));
+  });
+});
+
+// ── request batching (chunkByBudget) ──────────────────────
+describe("chunkByBudget", () => {
+  it("returns no batches for an empty input", () => {
+    expect(chunkByBudget([], 96, 1000)).toEqual([]);
+  });
+
+  it("keeps everything in one batch when under both caps", () => {
+    const texts = ["a", "b", "c"];
+    expect(chunkByBudget(texts, 96, 1000)).toEqual([texts]);
+  });
+
+  it("splits on the count cap", () => {
+    const texts = Array.from({ length: 5 }, (_, i) => `t${i}`);
+    expect(chunkByBudget(texts, 2, 10_000)).toEqual([["t0", "t1"], ["t2", "t3"], ["t4"]]);
+  });
+
+  it("splits on the char budget", () => {
+    // Each text is 10 chars; a 25-char budget fits two per batch.
+    const texts = ["x".repeat(10), "y".repeat(10), "z".repeat(10)];
+    expect(chunkByBudget(texts, 96, 25)).toEqual([[texts[0], texts[1]], [texts[2]]]);
+  });
+
+  it("emits an oversized text as its own batch rather than dropping it", () => {
+    const texts = ["small", "x".repeat(100), "small"];
+    expect(chunkByBudget(texts, 96, 10)).toEqual([["small"], ["x".repeat(100)], ["small"]]);
+  });
+
+  it("never loses or reorders inputs across a realistic split", () => {
+    const texts = Array.from({ length: 500 }, (_, i) => "w".repeat((i % 7) + 1));
+    const batches = chunkByBudget(texts, 96, 45_000);
+    expect(batches.flat()).toEqual(texts);
+    for (const b of batches) {
+      expect(b.length).toBeGreaterThan(0);
+      expect(b.length).toBeLessThanOrEqual(96);
+    }
+  });
+});
+
+// ── response parsing (parseEmbeddingResponse) ─────────────
+describe("parseEmbeddingResponse", () => {
+  it("returns row vectors in order for a well-formed OpenAI response", () => {
+    const vectors = parseEmbeddingResponse(
+      200,
+      {
+        data: [
+          { index: 0, embedding: [1, 0] },
+          { index: 1, embedding: [0, 1] },
+        ],
+      },
+      2,
+    );
+    expect(vectors).toEqual([
+      [1, 0],
+      [0, 1],
+    ]);
+  });
+
+  it("reorders by index when the provider returns rows out of order", () => {
+    const vectors = parseEmbeddingResponse(
+      200,
+      {
+        data: [
+          { index: 1, embedding: [0, 1] },
+          { index: 0, embedding: [1, 0] },
+        ],
+      },
+      2,
+    );
+    expect(vectors).toEqual([
+      [1, 0],
+      [0, 1],
+    ]);
+  });
+
+  it("preserves request order when rows omit index (USAi / Cohere)", () => {
+    const vectors = parseEmbeddingResponse(
+      200,
+      { data: [{ embedding: [1, 0] }, { embedding: [0, 1] }] },
+      2,
+    );
+    expect(vectors).toEqual([
+      [1, 0],
+      [0, 1],
+    ]);
+  });
+
+  it("throws on an OpenAI-style top-level error", () => {
+    expect(() => parseEmbeddingResponse(200, { error: { message: "bad key" } }, 1)).toThrow(
+      /bad key/,
+    );
+  });
+
+  it("throws on a gateway error nested under `detail` (GSA USAi / Vertex)", () => {
+    // Regression: this shape previously slipped past the top-level `error`
+    // check and was stored as empty vectors.
+    expect(() =>
+      parseEmbeddingResponse(
+        400,
+        { detail: "400 INVALID_ARGUMENT. 250 instance(s) is allowed per prediction." },
+        462,
+      ),
+    ).toThrow(/250 instance/);
+  });
+
+  it("throws on a non-2xx status even when the body has no error field", () => {
+    expect(() => parseEmbeddingResponse(500, {}, 1)).toThrow(/HTTP 500/);
+  });
+
+  it("stringifies a non-string `detail` payload", () => {
+    expect(() =>
+      parseEmbeddingResponse(400, { detail: { code: 400, status: "INVALID_ARGUMENT" } }, 1),
+    ).toThrow(/INVALID_ARGUMENT/);
+  });
+
+  it("throws when the vector count does not match the request", () => {
+    expect(() =>
+      parseEmbeddingResponse(200, { data: [{ index: 0, embedding: [1, 0] }] }, 2),
+    ).toThrow(/returned 1 vectors for 2 inputs/);
   });
 });

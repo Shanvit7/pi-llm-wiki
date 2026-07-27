@@ -40,6 +40,11 @@ describe("buildAgentStartInjection (issue #92 cache safety)", () => {
     expect(systemPrompt).toBe(`${BASE}\n\n${WIKI_STATUS_BLOCK}`);
   });
 
+  it("accepts OMP's segmented system prompt", () => {
+    const { systemPrompt } = buildAgentStartInjection([BASE, "Follow project rules."], []);
+    expect(systemPrompt).toBe(`${BASE}\n\nFollow project rules.\n\n${WIKI_STATUS_BLOCK}`);
+  });
+
   it("volatile blocks ride in a hidden tail message, joined in order", () => {
     const topic = "## Wiki Setup Required\ninfer topic";
     const { message } = buildAgentStartInjection(BASE, [topic, RECALL_A]);

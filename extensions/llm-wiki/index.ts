@@ -2,7 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { installGuardrails } from "./lib/guardrails.js";
-import { buildAgentStartInjection } from "./lib/inject.js";
+import { buildAgentStartInjection, normalizeSystemPrompt } from "./lib/inject.js";
 import { registerWikiModelCommand } from "./lib/model-command.js";
 import {
   buildSessionNotice,
@@ -303,13 +303,12 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
 
     // Split into a cache-stable system prompt (static footer only) and a
     // volatile tail message (issue #92). See lib/inject.ts for the contract.
-    const { systemPrompt, message } = buildAgentStartInjection(event.systemPrompt || "", [
-      dynamicContext,
-    ]);
+    const priorSystemPrompt = normalizeSystemPrompt(event.systemPrompt);
+    const { systemPrompt, message } = buildAgentStartInjection(priorSystemPrompt, [dynamicContext]);
 
     // Only claim a systemPrompt change when the footer actually altered the
     // string (a carry-forward turn already carries it, so this no-ops).
-    const systemPromptChanged = systemPrompt !== event.systemPrompt;
+    const systemPromptChanged = systemPrompt !== priorSystemPrompt;
     if (!systemPromptChanged && !message) return;
     return {
       ...(systemPromptChanged ? { systemPrompt } : {}),

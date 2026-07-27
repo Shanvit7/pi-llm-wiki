@@ -22,7 +22,6 @@ concurrency:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   update:
@@ -42,4 +41,4 @@ jobs:
           commit_message: "chore: update contributors list"
           committer_username: "github-actions[bot]"
           committer_email: "41898282+github-actions[bot]@users.noreply.github.com"
-          auto_detect_branch_protection: true
+          auto_detect_branch_protection: false

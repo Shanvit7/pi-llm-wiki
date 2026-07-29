@@ -448,6 +448,13 @@ Thanks to everyone who has contributed! This list is regenerated automatically b
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/deestax">
+                    <img src="https://avatars.githubusercontent.com/u/152369481?v=4" width="64;" alt="deestax"/>
+                    <br />
+                    <sub><b>Superdao</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/xcsf">
                     <img src="https://avatars.githubusercontent.com/u/43439835?v=4" width="64;" alt="xcsf"/>
                     <br />

@@ -77,7 +77,11 @@ Foundation does not change an existing vault's mode. The later Interchange migra
 
 ### Compatibility promise
 
-In both modes, newly created or materially rewritten knowledge documents use the canonical OKF shape defined here. Legacy mode preserves upgraded pi-llm-wiki behavior, not downgrade compatibility with older package versions whose parser cannot understand nested OKF v0.2 metadata.
+In both modes, every newly created concept path uses the canonical OKF shape defined here. Ordinary tool updates to an existing legacy document preserve its existing frontmatter shapes, including scalar or string-list `sources`; they parse, patch only the requested values, and serialize with legacy-shape preservation enabled. Foundation never converts an existing legacy document merely because a tool touched it. Canonical conversion of existing pages belongs exclusively to explicit migration in the later Interchange spec.
+
+A user or model may intentionally replace an entire file outside these service operations. The next rebuild parses the resulting file as written but does not infer that a migration occurred.
+
+Legacy mode preserves upgraded pi-llm-wiki behavior, not downgrade compatibility with older package versions whose parser cannot understand nested OKF v0.2 metadata.
 
 In legacy mode:
 
@@ -164,8 +168,11 @@ The selected parser configuration and tests must prove these restrictions. A new
 
 ### Serialization requirements
 
-- Emit UTF-8, LF line endings, and one final newline.
-- Emit one frontmatter mapping followed by the Markdown body.
+- Emit UTF-8 and LF line endings.
+- Emit the opening fence as `---\n`, YAML ending in one newline, and the closing fence as `---\n`.
+- For a non-empty body, emit exactly one blank separator line after the closing fence, then the body with exactly one final newline.
+- For an empty body, emit no blank separator line after the closing fence; the file ends with the closing fence's newline.
+- The parser removes one optional blank separator line from the model body; additional leading blank lines belong to the body.
 - Preserve unknown fields semantically.
 - Preserve explicit empty lists and mappings.
 - Do not promise preservation of comments, quote style, key order, scalar style, or blank-line formatting inside frontmatter.
@@ -199,8 +206,9 @@ In `okf-0.2` mode:
 
 - generated root index declares `okf_version: "0.2"`
 - missing generated root index is repairable by metadata rebuild
-- an existing root index declaring another version is a blocking mismatch diagnostic until explicitly handled
-- malformed version frontmatter is a blocking parse diagnostic
+- an existing root index declaring another version blocks projection writes until explicitly handled
+- malformed version frontmatter blocks projection writes
+- version mismatch does not prevent best-effort ordinary reads of parseable concept files; readers surface the version diagnostic alongside results
 
 In legacy mode, root index version metadata does not activate OKF behavior. Explicit mode remains source of truth. If a legacy-mode root index declares an unsupported version, tools report the mismatch but do not change mode or rewrite that file.
 
@@ -223,6 +231,8 @@ Required output:
 
 Recommended fields are emitted only when known. Foundation does not invent `generated`, `verified`, `sources`, `resource`, or `stale_after`.
 
+For a new document, `sources` uses the OKF v0.2 sequence-of-mappings shape. For an existing legacy document, scalar and string-list `sources` values remain unchanged during ordinary field patches. The shared model records those values separately from canonical structured sources so no caller can accidentally reinterpret a string as a structured provenance entry.
+
 Existing pi-llm-wiki extensions remain optional top-level fields:
 
 - `category`
@@ -243,6 +253,10 @@ Foundation recognizes two internal-link syntaxes:
 2. existing folder-qualified wikilinks
 
 ### Markdown links
+
+Link extraction follows CommonMark 0.31.2 parsing rules. A CommonMark-compatible AST parser, not a regular expression over raw Markdown, identifies links.
+
+Backlink-producing nodes include inline links and resolved full, collapsed, and shortcut reference links. Images, image references, autolinks, raw HTML links, footnote references, and bare URLs do not produce backlinks. Link-like text inside inline code, fenced code blocks, indented code blocks, or escaped Markdown remains text. A reference definition produces an edge only when a link node uses it. GFM tables and task lists may be accepted as body syntax but add no separate link semantics.
 
 Supported concept targets:
 
@@ -285,7 +299,6 @@ Directory indexes exist only in `okf-0.2` mode. The root and every directory con
 ```markdown
 ---
 okf_version: "0.2"
-profile: pi-llm-wiki/1
 ---
 
 # <vault name>
@@ -315,6 +328,7 @@ profile: pi-llm-wiki/1
 
 ### Generation rules
 
+- Root index frontmatter contains only `okf_version: "0.2"`. Foundation does not emit `profile` or another producer key there because OKF v0.2 is ambiguous about additional root-index frontmatter keys. The pi-llm-wiki profile remains documentation, not a bundle-level conformance claim, until OKF defines a portable profile-discovery mechanism.
 - Root H1 is `config.name`, falling back to `Wiki` when absent or empty.
 - Subdirectory H1 is the literal final directory segment.
 - Omit `## Directories` when there are no immediate child directories.
@@ -347,7 +361,7 @@ Each valid JSONL line must contain:
 }
 ```
 
-Additional JSON-compatible fields are allowed. Event writers append only after the associated authoritative wiki mutation succeeds. A projection rebuild itself does not append an event.
+Additional JSON-compatible fields are allowed. Event production is mode-independent: the same successful capture, creation, update, retro, observation, ingestion, and other tool-owned mutations append the same event in legacy and OKF modes. Event writers append only after the associated authoritative wiki mutation succeeds. A projection rebuild itself does not append an event. Manual file edits do not fabricate events because the extension cannot infer actor or intent safely.
 
 ### Log template
 
@@ -367,7 +381,7 @@ Additional JSON-compatible fields are allowed. Event writers append only after t
 - Group valid events by UTC date derived from timestamp.
 - Sort date groups newest first.
 - Within a date, sort timestamp newest first; ties use source sequence newest first.
-- Render `kind` as escaped plain text inside `**...**`.
+- Render `kind` as plain text inside `**...**`, escaping backslash, `*`, `_`, `[`, `]`, and collapsing line breaks to one space.
 - Render all fields except `timestamp` and `kind` as canonical JSON with recursively sorted object keys, no insignificant whitespace, and JSON array order preserved.
 - Omit the colon and details when no additional fields exist.
 - Emit LF line endings and exactly one final newline.
@@ -422,9 +436,19 @@ Shared service functions own:
 - registry/backlink construction
 - index/log projection
 
-Pi tools and MCP operations call those same functions. Existing MCP search/read/status behavior must understand documents parsed by the shared model and expose the same concept IDs, titles, descriptions, and parse diagnostics as Pi tools.
+The current MCP surface has five operations; Foundation maps them exactly:
 
-Behavioral parity is tested through shared fixtures and service-level expected results rather than duplicate interface-specific rules.
+| MCP operation | Shared behavior required |
+|---|---|
+| `wiki_recall` | Uses shared mode resolution, registry entries, concept IDs, titles, descriptions, and page parsing. Interface-specific vault selection and rendering may differ from Pi. |
+| `wiki_search` | Uses the same generated registry schema and type/title/extension metadata as Pi `wiki_search`. |
+| `wiki_status` | Reports resolved `knowledge_format`, page counts, and blocking projection diagnostics from shared status data. |
+| `wiki_retro` | Creates its source page through the same canonical new-document serializer as Pi `wiki_retro`. |
+| `wiki_capture_source` | Creates its skeleton source page through the same canonical new-document serializer as the Pi capture tool. |
+
+Foundation adds no MCP read operation. Behavioral parity means that, after selecting the same vault and invoking equivalent operations, Pi and MCP expose the same concept identity and parsed metadata and route writes through the same services. UI text, automatic context injection, and vault-selection transport remain interface-specific.
+
+Parity is tested through shared service fixtures plus thin interface tests; MCP does not reimplement parsing, registry scoring fields, or page serialization.
 
 ## Operation Table
 
@@ -432,8 +456,8 @@ Behavioral parity is tested through shared fixtures and service-level expected r
 |---|---|---|---|
 | Bootstrap new vault | No config | Persist `knowledge_format: okf-0.2`; create normal scaffolding | Build meta projections plus `wiki/index.md` and `wiki/log.md` |
 | Open old vault | Mode field absent | None | Resolve as legacy |
-| Create page in old vault | Legacy | Write one OKF-canonical concept | Rebuild only `meta/**`; do not create wiki reserved files |
-| Create page in new vault | OKF 0.2 | Write one OKF-canonical concept and append event after success | Rebuild `meta/**`, directory indexes, and root log |
+| Create page in old vault | Legacy | Write one OKF-canonical concept and append the same mode-independent event after success | Rebuild only `meta/**`; do not create wiki reserved files |
+| Create page in new vault | OKF 0.2 | Write one OKF-canonical concept and append the same mode-independent event after success | Rebuild `meta/**`, directory indexes, and root log |
 | Manual valid page edit | Either | Existing file edit | End-of-turn rebuild appropriate to mode; no fabricated event |
 | Rebuild with malformed page | Either | None | Return diagnostics; retain previous projections |
 | Rebuild with unresolved link | Either | None | Publish valid projections and report unresolved link |
@@ -476,7 +500,9 @@ Each diagnostic includes severity, code, file path, and message. Frontmatter dia
 - duplicate key, alias, custom tag, multiple document, byte-limit, and depth-limit rejection
 - scalar timestamps remain scalar values
 - parse/serialize semantic round trip
-- documented body newline normalization
+- exact non-empty-body separator and final newline
+- exact empty-body output with no separator blank line
+- documented handling of additional leading body blank lines
 
 ### Mode behavior
 
@@ -493,6 +519,8 @@ Each diagnostic includes severity, code, file path, and message. Frontmatter dia
 - Unicode NFC identity normalization
 - case-fold and normalization collision detection
 - reserved filename detection
+- CommonMark inline and full/collapsed/shortcut reference links
+- images, autolinks, HTML, footnotes, code spans/blocks, escapes, and unused reference definitions excluded from backlinks
 - root-relative, file-relative, fragment, query, and percent-encoded Markdown links
 - bundle escape rejection
 - wikilink compatibility

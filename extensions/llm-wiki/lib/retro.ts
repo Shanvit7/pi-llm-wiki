@@ -1,11 +1,12 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { scheduleReindex } from "./indexing.js";
+import { createKnowledgeDocument, writeKnowledgeDocumentFile } from "./knowledge-document.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
 import { type VaultPaths, fmtDate, resolveVaultPaths } from "./utils.js";
+import { assertWritableVault, inspectWritableVault } from "./vault-format.js";
 
 // ─── Public API ────────────────────────────────────────
 
@@ -24,6 +25,16 @@ export interface RetroResult {
  * The 4-layer pipeline (raw → source pages → canonical pages → metadata)
  * is still available via wiki_capture_source → wiki_ingest for deep research.
  */
+function insightPath(paths: VaultPaths, slug: string): string {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug === "index" || slug === "log") {
+    throw new Error(`Invalid insight slug: ${slug}`);
+  }
+  const directory = resolve(paths.wiki, "sources");
+  const target = resolve(directory, `${slug}.md`);
+  if (dirname(target) !== directory) throw new Error(`Invalid insight slug: ${slug}`);
+  return target;
+}
+
 export function saveInsight(
   paths: VaultPaths,
   slug: string,
@@ -32,41 +43,38 @@ export function saveInsight(
   category?: string,
   opts?: { rebuild?: boolean },
 ): RetroResult {
+  assertWritableVault(paths);
   const today = fmtDate();
 
-  // Write a single markdown file to wiki/sources/{slug}.md
-  const sourcePageDir = join(paths.wiki, "sources");
-  mkdirSync(sourcePageDir, { recursive: true });
-  const sourcePagePath = join(sourcePageDir, `${slug}.md`);
+  const sourcePagePath = insightPath(paths, slug);
 
-  const pageContent = [
-    "---",
-    "type: source",
-    `title: "${title}"`,
-    `slug: ${slug}`,
-    "status: insight",
-    `created: ${today}`,
-    `updated: ${today}`,
-    category ? `category: ${category}` : "",
-    "---",
-    "",
-    `# ${title}`,
-    "",
-    body,
-    "",
-    category ? `*Category: ${category}*` : "",
-    "",
-    "---",
-    `*Captured: ${today}*`,
-    "",
-    "## Related",
-    "",
-    "_Add links to related pages._",
-    "",
-  ]
-    .filter((l) => l !== "")
-    .join("\n");
-  writeFileSync(sourcePagePath, pageContent, "utf-8");
+  const pageBody = `# ${title}
+
+${body}
+
+${category ? `*Category: ${category}*` : ""}
+
+---
+*Captured: ${today}*
+
+## Related
+
+_Add links to related pages._`;
+
+  const doc = createKnowledgeDocument(
+    `sources/${slug}.md`,
+    {
+      type: "source",
+      title,
+      slug,
+      status: "insight",
+      created: today,
+      updated: today,
+      ...(category ? { category } : {}),
+    },
+    pageBody,
+  );
+  writeKnowledgeDocumentFile(sourcePagePath, doc);
 
   // Log event
   appendEvent(paths, {
@@ -125,22 +133,38 @@ export function registerWikiRetro(pi: ExtensionAPI, runtime?: Runtime): void {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = resolveVaultPaths(ctx.cwd ?? process.cwd());
 
-      if (!existsSync(join(paths.dotWiki, "config.json"))) {
+      const vaultCheck = inspectWritableVault(paths);
+      if (!vaultCheck.ok) {
         return {
           content: [
             {
               type: "text",
-              text: "No wiki vault found at this location. Initialize one with wiki_bootstrap first.",
+              text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}`,
             },
           ],
-          details: { error: "no_vault" } as Record<string, unknown>,
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
 
-      const result = saveInsight(paths, params.slug, params.title, params.body, params.category, {
-        rebuild: !runtime,
-      });
+      let result: RetroResult;
+      try {
+        result = saveInsight(paths, params.slug, params.title, params.body, params.category, {
+          rebuild: !runtime,
+        });
+      } catch (error: unknown) {
+        if ((error as Error).message.startsWith("Invalid insight slug:")) {
+          return {
+            content: [{ type: "text", text: (error as Error).message }],
+            details: { error: "invalid_insight_slug" } as Record<string, unknown>,
+            isError: true,
+          };
+        }
+        throw error;
+      }
       if (runtime) {
         scheduleReindex(runtime, { hasUI: ctx.hasUI, ui: ctx.ui }, paths);
       }

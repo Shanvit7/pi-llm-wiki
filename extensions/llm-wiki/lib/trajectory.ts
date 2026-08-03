@@ -12,6 +12,7 @@ import {
   resolveVaultPaths,
   writeJson,
 } from "./utils.js";
+import { assertWritableVault, inspectWritableVault } from "./vault-format.js";
 
 /**
  * Agent trajectory memory — the working-memory half of the wiki.
@@ -230,6 +231,7 @@ export function captureTrajectory(
   paths: VaultPaths,
   input: CaptureTrajectoryInput,
 ): CaptureTrajectoryResult {
+  assertWritableVault(paths);
   const trajectoryId = nextTrajectoryId(paths);
   const packetPath = join(paths.rawTrajectories, trajectoryId);
   mkdirSync(packetPath, { recursive: true });
@@ -356,7 +358,19 @@ export function registerWikiCaptureTrajectory(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       const paths = resolveVaultPaths(ctx.cwd ?? process.cwd());
-      if (!existsSync(join(paths.dotWiki, "config.json"))) return vaultMissing();
+      const vaultCheck = inspectWritableVault(paths);
+      if (!vaultCheck.ok) {
+        return {
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
+          isError: true,
+        };
+      }
 
       let steps = params.steps as TrajectoryStep[] | undefined;
       let model = params.model;

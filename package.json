@@ -38,6 +38,7 @@
     "skills",
     "prompts",
     "mcp",
+    "dist",
     "docs",
     "assets",
     "README.md",
@@ -51,6 +52,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "build:mcp": "node scripts/build-mcp.js",
+    "prepack": "node scripts/build-mcp.js",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --apply .",
@@ -65,7 +68,7 @@
     "prompts": ["./prompts"],
     "image": "https://raw.githubusercontent.com/zosmaai/pi-llm-wiki/main/assets/screenshot.png",
     "mcpservers": {
-      "llm-wiki": "node ./mcp/index.ts"
+      "llm-wiki": "node ./dist/mcp/index.js"
     }
   },
   "peerDependencies": {
@@ -79,7 +82,9 @@
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@modelcontextprotocol/server": "^2.0.0-alpha.2",
+    "mdast-util-from-markdown": "^2.0.3",
     "node-html-markdown": "^2.0.0",
+    "yaml": "^2.9.0",
     "zod": "^4.0"
   },
   "devDependencies": {
@@ -88,6 +93,7 @@
     "@mariozechner/pi-ai": "^0.70.2",
     "@mariozechner/pi-coding-agent": "^0.70.2",
     "@mermaid-js/mermaid-cli": "^11.12.0",
+    "@types/mdast": "^4.0.4",
     "@types/node": "^22",
     "@vitest/coverage-v8": "^3.2.4",
     "typebox": "^1.1.34",

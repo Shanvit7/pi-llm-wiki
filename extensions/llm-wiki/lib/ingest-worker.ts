@@ -4,9 +4,19 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import type { Static } from "typebox";
+import {
+  type KnowledgeDiagnostic,
+  type KnowledgeDocument,
+  createKnowledgeDocument,
+  patchKnowledgeDocument,
+  readKnowledgeDocumentFile,
+  serializeKnowledgeDocument,
+  writeKnowledgeDocumentFile,
+} from "./knowledge-document.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
 import { runSubAgent } from "./subagent.js";
 import { type VaultPaths, fmtDate, slugify } from "./utils.js";
+import { VaultWriteError, assertWritableVault } from "./vault-format.js";
 
 /**
  * Background ingest synthesis (issue #65, part of epic #63).
@@ -76,39 +86,51 @@ export interface CommitResult {
   contradictions: number;
 }
 
+export type CommitSynthesisOutcome =
+  | ({ ok: true } & CommitResult)
+  | { ok: false; sourceId: string; diagnostics: KnowledgeDiagnostic[] };
+
 // ── deterministic persistence (no LLM) ────────────────────
 
-function buildEntityPage(
-  title: string,
-  description: string,
-  date: string,
-  sourceId: string,
-): string {
+function buildEntityPageBody(title: string, description: string, sourceId: string): string {
   const desc = description.trim() || "One-line description.";
-  return `---\ntype: entity\ncreated: ${date}\nupdated: ${date}\nsources: [[[sources/${sourceId}]]]\n---\n\n# ${title}\n\n${desc}\n\n## Overview\n\n[Key facts]\n\n## Links\n\n- [[sources/${sourceId}]]\n`;
+  return `# ${title}
+
+${desc}
+
+## Overview
+
+[Key facts]
+
+## Links
+
+- [${sourceId}](/sources/${sourceId}.md)`;
 }
 
-function buildConceptPage(
-  title: string,
-  definition: string,
-  date: string,
-  sourceId: string,
-): string {
+function buildConceptPageBody(title: string, definition: string, sourceId: string): string {
   const def = definition.trim() || "One-line definition.";
-  return `---\ntype: concept\ncreated: ${date}\nupdated: ${date}\nsources: [[[sources/${sourceId}]]]\n---\n\n# ${title}\n\n${def}\n\n## Definition\n\n[Clear explanation]\n\n## Links\n\n- [[sources/${sourceId}]]\n`;
+  return `# ${title}
+
+${def}
+
+## Definition
+
+[Clear explanation]
+
+## Links
+
+- [${sourceId}](/sources/${sourceId}.md)`;
 }
 
-/** Rebuild the source page from synthesis data, marking it ingested. */
-export function buildIngestedSourcePage(
+/** Rebuild the source page body from synthesis data, marking it ingested. */
+export function buildIngestedSourcePageBody(
   manifest: Record<string, unknown>,
   data: SynthesisData,
-  date: string,
+  _date: string,
 ): string {
   const id = String(manifest.id);
   const title = String(manifest.title || id);
   const url = manifest.url ? `\n> _Original: [${manifest.url}](${manifest.url})_` : "";
-  const format = String(manifest.format || "unknown");
-  const captured = String(manifest.captured || date);
 
   const takeaways =
     data.key_takeaways.length > 0
@@ -116,11 +138,11 @@ export function buildIngestedSourcePage(
       : "- [None recorded]";
   const entities =
     data.entities.length > 0
-      ? data.entities.map((e) => `- [[entities/${slugify(e.title)}]]`).join("\n")
+      ? data.entities.map((e) => `- [${e.title}](/entities/${slugify(e.title)}.md)`).join("\n")
       : "- [None]";
   const concepts =
     data.concepts.length > 0
-      ? data.concepts.map((c) => `- [[concepts/${slugify(c.title)}]]`).join("\n")
+      ? data.concepts.map((c) => `- [${c.title}](/concepts/${slugify(c.title)}.md)`).join("\n")
       : "- [None]";
   const quotes =
     data.quotes && data.quotes.length > 0
@@ -133,7 +155,61 @@ export function buildIngestedSourcePage(
       ? `\n## Contradictions\n\n${data.contradictions.map((c) => `⚠️ **Contradiction**: ${c.trim()}`).join("\n")}\n`
       : "";
 
-  return `---\ntype: source\nformat: ${format}\nsource_id: ${id}\nraw_path: raw/sources/${id}/extracted.md\ncaptured: ${captured}\nstatus: ingested\nupdated: ${date}\n---\n\n# ${title}${url}\n\n## Summary\n\n${data.summary.trim()}\n\n## Key Takeaways\n\n${takeaways}\n\n## Entities Mentioned\n\n${entities}\n\n## Concepts Mentioned\n\n${concepts}\n\n## Notable Quotes\n\n${quotes}\n${contradictions}\n## Source Packet\n\n- **ID:** \`[[sources/${id}]]\`\n- **Extracted:** [raw/sources/${id}/extracted.md](../raw/sources/${id}/extracted.md)\n- **Manifest:** [raw/sources/${id}/manifest.json](../raw/sources/${id}/manifest.json)\n`;
+  return `# ${title}${url}
+
+## Summary
+
+${data.summary.trim()}
+
+## Key Takeaways
+
+${takeaways}
+
+## Entities Mentioned
+
+${entities}
+
+## Concepts Mentioned
+
+${concepts}
+
+## Notable Quotes
+
+${quotes}
+${contradictions}## Source Packet
+
+- **ID:** \`sources/${id}\`
+- **Extracted:** [raw/sources/${id}/extracted.md](../raw/sources/${id}/extracted.md)
+- **Manifest:** [raw/sources/${id}/manifest.json](../raw/sources/${id}/manifest.json)
+`;
+}
+
+/** Rebuild the source page from synthesis data, marking it ingested. */
+export function buildIngestedSourcePage(
+  manifest: Record<string, unknown>,
+  data: SynthesisData,
+  date: string,
+): string {
+  const id = String(manifest.id);
+  const title = String(manifest.title || id);
+  const format = String(manifest.format || "unknown");
+  const captured = String(manifest.captured || date);
+  const body = buildIngestedSourcePageBody(manifest, data, date);
+  const doc = createKnowledgeDocument(
+    `sources/${id}.md`,
+    {
+      type: "source",
+      title,
+      format,
+      source_id: id,
+      raw_path: `raw/sources/${id}/extracted.md`,
+      captured,
+      status: "ingested",
+      updated: date,
+    },
+    body,
+  );
+  return serializeKnowledgeDocument(doc);
 }
 
 /**
@@ -147,7 +223,7 @@ export function commitSynthesis(
   manifest: Record<string, unknown>,
   data: SynthesisData,
   date: string = fmtDate(),
-): CommitResult {
+): CommitSynthesisOutcome {
   const result: CommitResult = {
     sourceId,
     sourcePage: join(paths.wiki, "sources", `${sourceId}.md`),
@@ -158,9 +234,42 @@ export function commitSynthesis(
     contradictions: data.contradictions?.length ?? 0,
   };
 
-  // Source page (always rewritten from skeleton → ingested).
+  try {
+    assertWritableVault(paths);
+  } catch (error: unknown) {
+    if (error instanceof VaultWriteError) {
+      return { ok: false, sourceId, diagnostics: error.diagnostics };
+    }
+    throw error;
+  }
+
+  // Patch existing documents so unknown fields, legacy sources, and titles survive.
+  let sourceDocument: KnowledgeDocument;
+  if (existsSync(result.sourcePage)) {
+    const parsed = readKnowledgeDocumentFile(result.sourcePage, `sources/${sourceId}.md`);
+    if (!parsed.ok) return { ok: false, sourceId, diagnostics: parsed.diagnostics };
+    sourceDocument = patchKnowledgeDocument(parsed.document, {
+      fields: { status: "ingested", updated: date },
+      body: buildIngestedSourcePageBody(manifest, data, date),
+    });
+  } else {
+    sourceDocument = createKnowledgeDocument(
+      `sources/${sourceId}.md`,
+      {
+        type: "source",
+        title: String(manifest.title || sourceId),
+        format: String(manifest.format || "unknown"),
+        source_id: sourceId,
+        raw_path: `raw/sources/${sourceId}/extracted.md`,
+        captured: String(manifest.captured || date),
+        status: "ingested",
+        updated: date,
+      },
+      buildIngestedSourcePageBody(manifest, data, date),
+    );
+  }
   mkdirSync(join(paths.wiki, "sources"), { recursive: true });
-  writeFileSync(result.sourcePage, buildIngestedSourcePage(manifest, data, date), "utf-8");
+  writeKnowledgeDocumentFile(result.sourcePage, sourceDocument);
 
   // Entity pages — create if absent, link if present.
   mkdirSync(join(paths.wiki, "entities"), { recursive: true });
@@ -171,7 +280,19 @@ export function commitSynthesis(
     if (existsSync(pagePath)) {
       result.entitiesLinked.push(slug);
     } else {
-      writeFileSync(pagePath, buildEntityPage(e.title, e.description, date, sourceId), "utf-8");
+      const entityDoc = createKnowledgeDocument(
+        `entities/${slug}.md`,
+        {
+          type: "entity",
+          title: e.title,
+          description: e.description.trim() || "One-line description.",
+          created: date,
+          updated: date,
+        },
+        buildEntityPageBody(e.title, e.description, sourceId),
+        [{ id: sourceId, resource: `/sources/${sourceId}.md` }],
+      );
+      writeKnowledgeDocumentFile(pagePath, entityDoc);
       result.entitiesCreated.push(slug);
     }
   }
@@ -185,7 +306,19 @@ export function commitSynthesis(
     if (existsSync(pagePath)) {
       result.conceptsLinked.push(slug);
     } else {
-      writeFileSync(pagePath, buildConceptPage(c.title, c.definition, date, sourceId), "utf-8");
+      const conceptDoc = createKnowledgeDocument(
+        `concepts/${slug}.md`,
+        {
+          type: "concept",
+          title: c.title,
+          description: c.definition.trim() || "One-line definition.",
+          created: date,
+          updated: date,
+        },
+        buildConceptPageBody(c.title, c.definition, sourceId),
+        [{ id: sourceId, resource: `/sources/${sourceId}.md` }],
+      );
+      writeKnowledgeDocumentFile(pagePath, conceptDoc);
       result.conceptsCreated.push(slug);
     }
   }
@@ -199,7 +332,7 @@ export function commitSynthesis(
     background: true,
   });
 
-  return result;
+  return { ok: true, ...result };
 }
 
 // ── sub-agent synthesis (LLM) ─────────────────────────────
@@ -253,7 +386,15 @@ export async function runIngestSynthesis(
       "Persist the structured synthesis of this source into wiki pages. Call exactly once.",
     parameters: CommitSynthesisSchema,
     execute: async (_id, params) => {
-      committed = commitSynthesis(paths, sourceId, manifest, params);
+      const outcome = commitSynthesis(paths, sourceId, manifest, params);
+      if (!outcome.ok) {
+        return {
+          content: [{ type: "text", text: `Failed: ${outcome.diagnostics[0].message}` }],
+          details: { sourceId },
+          isError: true,
+        };
+      }
+      committed = outcome;
       const ack = `Committed: source page + ${committed.entitiesCreated.length} new entit${
         committed.entitiesCreated.length === 1 ? "y" : "ies"
       }, ${committed.conceptsCreated.length} new concept${

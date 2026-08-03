@@ -6,6 +6,7 @@ import {
   buildIngestedSourcePage,
   commitSynthesis,
 } from "../extensions/llm-wiki/lib/ingest-worker.js";
+import { parseKnowledgeDocument } from "../extensions/llm-wiki/lib/knowledge-document.js";
 import { ensureVaultStructure, getVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
 
 const MANIFEST = {
@@ -40,8 +41,8 @@ describe("buildIngestedSourcePage", () => {
     expect(page).toContain("# Attention Is All You Need");
     expect(page).toContain("Transformer architecture");
     expect(page).toContain("- Self-attention scales well");
-    expect(page).toContain("[[concepts/self-attention]]");
-    expect(page).toContain("[[entities/google-brain]]");
+    expect(page).toContain("[Self-Attention](/concepts/self-attention.md)");
+    expect(page).toContain("[Google Brain](/entities/google-brain.md)");
     expect(page).toContain("> Attention is all you need — Vaswani et al.");
     expect(page).toContain("⚠️ **Contradiction**");
     expect(page).toContain("[https://example.com/paper]");
@@ -73,6 +74,10 @@ describe("commitSynthesis", () => {
     wikiDir = join(tmpDir, "vault");
     mkdirSync(wikiDir, { recursive: true });
     ensureVaultStructure(getVaultPaths(wikiDir));
+    writeFileSync(
+      join(getVaultPaths(wikiDir).dotWiki, "config.json"),
+      JSON.stringify({ name: "Ingest test" }),
+    );
   });
   afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
 
@@ -80,6 +85,8 @@ describe("commitSynthesis", () => {
     const paths = getVaultPaths(wikiDir);
     const res = commitSynthesis(paths, "SRC-001", MANIFEST, DATA, "2026-06-06");
 
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
     const sourcePage = readFileSync(join(paths.wiki, "sources", "SRC-001.md"), "utf-8");
     expect(sourcePage).toContain("status: ingested");
 
@@ -98,6 +105,8 @@ describe("commitSynthesis", () => {
 
     const res = commitSynthesis(paths, "SRC-001", MANIFEST, DATA, "2026-06-06");
 
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
     expect(res.entitiesLinked).toContain("google-brain");
     expect(res.entitiesCreated).not.toContain("google-brain");
     expect(readFileSync(existing, "utf-8")).toBe("PRE-EXISTING CONTENT");
@@ -105,11 +114,53 @@ describe("commitSynthesis", () => {
 
   it("appends an ingest event and rebuilds registry on metadata rebuild", () => {
     const paths = getVaultPaths(wikiDir);
-    commitSynthesis(paths, "SRC-001", MANIFEST, DATA, "2026-06-06");
+    const res = commitSynthesis(paths, "SRC-001", MANIFEST, DATA, "2026-06-06");
+    expect(res.ok).toBe(true);
     const events = readFileSync(join(paths.meta, "events.jsonl"), "utf-8");
     expect(events).toContain('"kind":"ingest"');
     expect(events).toContain('"source_id":"SRC-001"');
     expect(events).toContain('"background":true');
+  });
+
+  it.each([
+    ["scalar", "sources: sources/SRC-legacy"],
+    ["list", "sources: [sources/SRC-a, sources/SRC-b]"],
+  ])("patches an existing %s-source page without migration or field loss", (_label, sources) => {
+    const paths = getVaultPaths(wikiDir);
+    const page = join(paths.wiki, "sources", "SRC-001.md");
+    mkdirSync(join(paths.wiki, "sources"), { recursive: true });
+    writeFileSync(
+      page,
+      [
+        "---",
+        "type: source",
+        "title: Original title",
+        sources,
+        "producer_data:",
+        "  nested:",
+        "    keep: true",
+        "status: skeleton",
+        "---",
+        "",
+        "Old body.",
+        "",
+      ].join("\n"),
+    );
+
+    const before = parseKnowledgeDocument(readFileSync(page, "utf8"), "sources/SRC-001.md");
+    expect(before.ok).toBe(true);
+    const result = commitSynthesis(paths, "SRC-001", MANIFEST, DATA, "2026-06-06");
+    expect(result.ok).toBe(true);
+    const after = parseKnowledgeDocument(readFileSync(page, "utf8"), "sources/SRC-001.md");
+    expect(after.ok).toBe(true);
+    if (!before.ok || !after.ok) return;
+    expect(after.document.sources).toEqual(before.document.sources);
+    expect(after.document.extensions.producer_data).toEqual(
+      before.document.extensions.producer_data,
+    );
+    expect(after.document.frontmatter.title).toBe("Original title");
+    expect(after.document.frontmatter.status).toBe("ingested");
+    expect(after.document.frontmatter.updated).toBe("2026-06-06");
   });
 
   it("skips entries with empty slugs without throwing", () => {
@@ -127,6 +178,8 @@ describe("commitSynthesis", () => {
       "2026-06-06",
     );
     // Non-alphanumeric titles fall back to "untitled" slug.
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
     expect(res.entitiesCreated).toEqual(["untitled"]);
   });
 });

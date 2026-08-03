@@ -2,26 +2,23 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, relative } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { bootstrapVault } from "./bootstrap.js";
 import { launchEmbedPages, reindexEmbeddings, resolveEmbedder } from "./embeddings.js";
 import { scheduleReindex } from "./indexing.js";
 import { runIngestSynthesis } from "./ingest-worker.js";
 import {
-  type Registry,
-  appendEvent,
-  buildBacklinks,
-  buildRegistry,
-  rebuildMetadata,
-  rebuildMetadataLight,
-} from "./metadata.js";
+  createKnowledgeDocument,
+  serializeKnowledgeDocument,
+  writeKnowledgeDocumentFile,
+} from "./knowledge-document.js";
+import { buildResolvedBacklinks } from "./knowledge-links.js";
+import { type Registry, appendEvent, rebuildMetadata, rebuildMetadataLight } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
 import { captureFile, captureText, captureUrl } from "./source-packet.js";
 import { parseModelRef } from "./task-config.js";
 import {
   type VaultPaths,
   detectVaultFormat,
-  ensureVaultStructure,
-  extractWikilinks,
-  findWikiPages,
   fmtDate,
   getVaultPaths,
   readJson,
@@ -29,6 +26,12 @@ import {
   slugify,
   writeJson,
 } from "./utils.js";
+import {
+  assertWritableVault,
+  compareCodePoint,
+  discoverKnowledgeDocuments,
+  inspectWritableVault,
+} from "./vault-format.js";
 
 /**
  * All LLM Wiki custom tools.
@@ -116,59 +119,35 @@ export function registerWikiBootstrap(pi: ExtensionAPI): void {
       const root = params.root ?? ctx.cwd ?? process.cwd();
       const mode = params.mode || "personal";
       const paths = getVaultPaths(root);
-
-      ensureVaultStructure(paths);
-
-      const config = {
-        name: params.topic,
-        mode,
-        topic: params.topic,
-        created: fmtDate(),
-        version: "1.0",
-      };
-      writeJson(join(paths.dotWiki, "config.json"), config);
-
-      const schema = [
-        "# LLM Wiki Schema",
-        "",
-        "## Ownership Rules",
-        "",
-        "| Path | Owner | Rule |",
-        "|------|-------|------|",
-        "| raw/** | extension | immutable after capture |",
-        "| wiki/** | model + user | editable knowledge pages |",
-        "| meta/* | extension | auto-generated |",
-        "| . | human + explicit request | operating rules |",
-        "",
-        "## Source Packet Format",
-        "",
-        "```",
-        "raw/sources/SRC-YYYY-MM-DD-NNN/",
-        "  manifest.json",
-        "  original/",
-        "  extracted.md",
-        "  attachments/",
-        "```",
-        "",
-        "## Page Types",
-        "",
-        "- **source** — what this specific source says",
-        "- **entity** — people, orgs, tools, products",
-        "- **concept** — ideas, patterns, frameworks",
-        "- **synthesis** — cross-source theses and tensions",
-        "- **analysis** — durable filed answers from queries",
-        "- **requirement** — atomic requirements with status, priority, and traceability",
-        "",
-        "## Linking Style",
-        "",
-        "- Internal: [[folder/page-name]]",
-        "- Citation: [[sources/SRC-YYYY-MM-DD-NNN]]",
-        "",
-      ].join("\n");
-      writeFileSync(join(paths.dotWiki, "WIKI_SCHEMA.md"), schema, "utf-8");
-
-      rebuildMetadata(paths);
-      appendEvent(paths, { kind: "bootstrap", topic: params.topic, mode });
+      const result = bootstrapVault(paths, { topic: params.topic, mode });
+      if (!result.ok) {
+        return {
+          content: [{ type: "text", text: `Wiki vault error: ${result.diagnostics[0].message}` }],
+          details: {
+            error: result.diagnostics[0].code,
+            diagnostics: result.diagnostics,
+          } as Record<string, unknown>,
+          isError: true,
+        };
+      }
+      if (!result.projection.ok) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Wiki bootstrapped but projection rebuild had issues: ${result.projection.diagnostics
+                .map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`)
+                .join("; ")}`,
+            },
+          ],
+          details: {
+            root,
+            mode,
+            topic: params.topic,
+            diagnostics: result.projection.diagnostics,
+          } as Record<string, unknown>,
+        };
+      }
 
       return {
         content: [
@@ -216,11 +195,16 @@ export function registerWikiCaptureSource(pi: ExtensionAPI, runtime?: Runtime): 
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const vaultCheck = requireVault(paths);
+      const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
         return {
-          content: [{ type: "text", text: vaultCheck.reason }],
-          details: { error: vaultCheck.reason } as Record<string, unknown>,
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
@@ -315,11 +299,16 @@ export function registerWikiIngest(pi: ExtensionAPI, runtime?: Runtime): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const vaultCheck = requireVault(paths);
+      const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
         return {
-          content: [{ type: "text", text: vaultCheck.reason }],
-          details: { error: vaultCheck.reason } as Record<string, unknown>,
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
@@ -528,11 +517,16 @@ export function registerWikiEnsurePage(pi: ExtensionAPI, runtime?: Runtime): voi
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const vaultCheck = requireVault(paths);
+      const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
         return {
-          content: [{ type: "text", text: vaultCheck.reason }],
-          details: { error: vaultCheck.reason } as Record<string, unknown>,
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
@@ -567,9 +561,19 @@ export function registerWikiEnsurePage(pi: ExtensionAPI, runtime?: Runtime): voi
       }
 
       const today = fmtDate();
-      const template = buildPageTemplate(type, params.title, today, params.content);
+      const body = params.content ?? buildPageBody(type, params.title);
+      const doc = createKnowledgeDocument(
+        `${folder}/${slug}.md`,
+        {
+          type,
+          title: params.title,
+          created: today,
+          updated: today,
+        },
+        body,
+      );
       mkdirSync(join(paths.wiki, folder), { recursive: true });
-      writeFileSync(pagePath, template, "utf-8");
+      writeKnowledgeDocumentFile(pagePath, doc);
 
       appendEvent(paths, {
         kind: "ensure_page",
@@ -595,151 +599,135 @@ export function registerWikiEnsurePage(pi: ExtensionAPI, runtime?: Runtime): voi
   });
 }
 
-function buildPageTemplate(
-  type: string,
-  title: string,
-  date: string,
-  customContent?: string,
-): string {
-  if (customContent) return customContent;
-
-  const base = `---\ntype: ${type}\ncreated: ${date}\nupdated: ${date}\nsources: []\n---\n\n# ${title}\n\n[Description to be filled]\n\n## Links\n\n- [[related-page]]\n`;
-
+function buildPageBody(type: string, title: string): string {
   if (type === "entity") {
-    return base
-      .replace("[Description to be filled]", "One-line description.\n\n## Overview\n\n[Key facts]")
-      .replace("type: entity", "type: entity\ncategory: organization");
+    return `# ${title}
+
+One-line description.
+
+## Overview
+
+[Key facts]
+
+## Links
+
+- [related-page](/concepts/related-page.md)`;
   }
   if (type === "concept") {
-    return base
-      .replace(
-        "[Description to be filled]",
-        "One-line definition.\n\n## Definition\n\n[Clear explanation]",
-      )
-      .replace("type: concept", "type: concept\ndomain: ai");
+    return `# ${title}
+
+One-line definition.
+
+## Definition
+
+[Clear explanation]
+
+## Links
+
+- [related-page](/concepts/related-page.md)`;
   }
   if (type === "synthesis") {
-    return base
-      .replace(
-        "[Description to be filled]",
-        "Cross-cutting analysis.\n\n## Question\n\n[What drove this?]",
-      )
-      .replace("sources: []", "sources_count: 0");
+    return `# ${title}
+
+Cross-cutting analysis.
+
+## Question
+
+[What drove this?]
+
+## Links
+
+- [related-page](/concepts/related-page.md)`;
   }
   if (type === "analysis") {
-    return base.replace(
-      "[Description to be filled]",
-      "Durable answer from a query.\n\n## Question\n\n[Original question]",
-    );
+    return `# ${title}
+
+Durable answer from a query.
+
+## Question
+
+[Original question]
+
+## Links
+
+- [related-page](/concepts/related-page.md)`;
   }
   if (type === "skill") {
-    return [
-      "---",
-      "type: skill",
-      `created: ${date}`,
-      `updated: ${date}`,
-      "status: draft",
-      "trajectories: []",
-      "tags: []",
-      "---",
-      "",
-      `# ${title}`,
-      "",
-      "_One-line summary of the reusable pattern this skill captures._",
-      "",
-      "## When to Use",
-      "",
-      "[Trigger conditions — when this pattern applies]",
-      "",
-      "## Procedure",
-      "",
-      "1. [Step 1]",
-      "2. [Step 2]",
-      "",
-      "## Pitfalls",
-      "",
-      "- [Known failure mode or caveat]",
-      "",
-      "## Distilled From",
-      "",
-      "_Trajectories this skill was generalized from._",
-      "",
-      "- [[trajectories/TRJ-...]]",
-      "",
-    ].join("\n");
+    return `# ${title}
+
+_One-line summary of the reusable pattern this skill captures._
+
+## When to Use
+
+[Trigger conditions — when this pattern applies]
+
+## Procedure
+
+1. [Step 1]
+2. [Step 2]
+
+## Pitfalls
+
+- [Known failure mode or caveat]
+
+## Distilled From
+
+_Trajectories this skill was generalized from._
+
+- [trajectories/TRJ-...](/trajectories/TRJ-....md)`;
   }
   if (type === "case") {
-    return [
-      "---",
-      "type: case",
-      `created: ${date}`,
-      `updated: ${date}`,
-      "status: draft",
-      "outcome: success",
-      "trajectory_id: ",
-      "tags: []",
-      "---",
-      "",
-      `# ${title}`,
-      "",
-      "_One-line summary of the specific task this case records._",
-      "",
-      "## Task",
-      "",
-      "[What was requested]",
-      "",
-      "## Approach",
-      "",
-      "[How the agent solved it — key steps and decisions]",
-      "",
-      "## Outcome",
-      "",
-      "[Result, and anything worth reusing or avoiding next time]",
-      "",
-      "## Trajectory",
-      "",
-      "- [[trajectories/TRJ-...]] — captured tool-call run",
-      "",
-    ].join("\n");
+    return `# ${title}
+
+_One-line summary of the specific task this case records._
+
+## Task
+
+[What was requested]
+
+## Approach
+
+[How the agent solved it — key steps and decisions]
+
+## Outcome
+
+[Result, and anything worth reusing or avoiding next time]
+
+## Trajectory
+
+- [trajectories/TRJ-...](/trajectories/TRJ-....md) — captured tool-call run`;
   }
   if (type === "requirement") {
-    return [
-      "---",
-      "type: requirement",
-      `created: ${date}`,
-      `updated: ${date}`,
-      "status: draft",
-      "priority: p2",
-      "source_id: ",
-      "depends_on: []",
-      "---",
-      "",
-      `# ${title}`,
-      "",
-      "## Description",
-      "",
-      "[Clear description of what this requirement entails]",
-      "",
-      "## Acceptance Criteria",
-      "",
-      "- [ ] [Criterion 1]",
-      "- [ ] [Criterion 2]",
-      "",
-      "## Dependencies",
-      "",
-      "_Pages this requirement depends on._",
-      "",
-      "## Implementation Notes",
-      "",
-      "[Optional notes]",
-      "",
-      "## Sources",
-      "",
-      "- [[sources/SRC-...]] — original concept capture",
-      "",
-    ].join("\n");
+    return `# ${title}
+
+## Description
+
+[Clear description of what this requirement entails]
+
+## Acceptance Criteria
+
+- [ ] [Criterion 1]
+- [ ] [Criterion 2]
+
+## Dependencies
+
+_Pages this requirement depends on._
+
+## Implementation Notes
+
+[Optional notes]
+
+## Sources
+
+- [sources/SRC-...](/sources/SRC-....md) — original concept capture`;
   }
-  return base;
+  return `# ${title}
+
+[Description to be filled]
+
+## Links
+
+- [related-page](/concepts/related-page.md)`;
 }
 
 // ─── 5. wiki_search ─────────────────────────────────────
@@ -757,29 +745,16 @@ export function registerWikiSearch(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
-        version: "1.0",
-        last_updated: "",
-        pages: {},
-      });
-      const q = params.query.toLowerCase();
+      const { searchRegistry } = await import("./wiki-service.js");
+      const result = searchRegistry(paths, params.query, params.type);
 
-      const matches = Object.entries(registry.pages)
-        .filter(([id, entry]) => {
-          const matchesQuery =
-            id.toLowerCase().includes(q) ||
-            String(entry.title).toLowerCase().includes(q) ||
-            String(entry.type).toLowerCase().includes(q);
-          const matchesType =
-            !params.type || String(entry.type).toLowerCase() === params.type.toLowerCase();
-          return matchesQuery && matchesType;
-        })
-        .map(([id, entry]) => ({ id, title: entry.title, type: entry.type }));
-
-      if (matches.length === 0) {
+      if (result.matches.length === 0) {
         return {
           content: [{ type: "text", text: `No pages found for "${params.query}"` }],
-          details: { query: params.query, matches: [] } as Record<string, unknown>,
+          details: { query: params.query, matches: [], diagnostics: result.diagnostics } as Record<
+            string,
+            unknown
+          >,
         };
       }
 
@@ -788,13 +763,17 @@ export function registerWikiSearch(pi: ExtensionAPI): void {
           {
             type: "text",
             text: [
-              `🔍 **${matches.length} result(s)** for "${params.query}":`,
+              `🔍 **${result.matches.length} result(s)** for "${params.query}":`,
               "",
-              ...matches.map((m) => `- [[${m.id}]] — *${m.type}* — ${m.title}`),
+              ...result.matches.map((m) => `- [[${m.id}]] — *${m.type}* — ${m.title}`),
             ].join("\n"),
           },
         ],
-        details: { query: params.query, matches } as Record<string, unknown>,
+        details: {
+          query: params.query,
+          matches: result.matches,
+          diagnostics: result.diagnostics,
+        } as Record<string, unknown>,
       };
     },
   });
@@ -820,11 +799,16 @@ export function registerWikiLint(pi: ExtensionAPI, runtime?: Runtime): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const vaultCheck = requireVault(paths);
+      const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
         return {
-          content: [{ type: "text", text: vaultCheck.reason }],
-          details: { error: vaultCheck.reason } as Record<string, unknown>,
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
@@ -846,73 +830,90 @@ export function registerWikiLint(pi: ExtensionAPI, runtime?: Runtime): void {
  * run off-thread via `dispatchReported`). Returns the human-readable summary.
  */
 function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
-  const pages = findWikiPages(paths.wiki);
-  const registry = buildRegistry(paths);
-  buildBacklinks(paths, registry); // ensures backlinks.json is current
+  assertWritableVault(paths);
+  const projection = rebuildMetadata(paths);
+  if (!projection.ok) {
+    return [
+      "# Wiki Lint Report",
+      "",
+      "Projection-blocking diagnostics:",
+      ...projection.diagnostics.map(
+        (diagnostic) => `- ${diagnostic.code}: ${diagnostic.path}: ${diagnostic.message}`,
+      ),
+    ].join("\n");
+  }
 
+  const discovery = discoverKnowledgeDocuments(paths);
+  const pages = discovery.documents;
+  const knownIds = new Set(pages.map((page) => page.id));
+  const inbound = Object.fromEntries(pages.map((page) => [page.id, 0]));
+  const gapSources = new Map<string, Set<string>>();
   const findings: string[] = [];
-  let orphans = 0;
   let missingPages = 0;
   let contradictions = 0;
-  const gaps: Array<{ topic: string; mentionedBy: string[] }> = [];
-
-  const allPageIds = new Set(pages.map((p) => p.relative));
-  const linkCounts: Record<string, number> = {};
 
   for (const page of pages) {
-    const links = extractWikilinks(page.content);
-    for (const link of links) {
-      if (!allPageIds.has(link)) {
-        missingPages++;
-        findings.push(`Missing page: [[${link}]] (in [[${page.relative}]])`);
-        const existing = gaps.find((g) => g.topic === link);
-        if (existing) {
-          if (!existing.mentionedBy.includes(page.relative))
-            existing.mentionedBy.push(page.relative);
-        } else {
-          gaps.push({ topic: link, mentionedBy: [page.relative] });
-        }
-      } else {
-        linkCounts[link] = (linkCounts[link] || 0) + 1;
-      }
+    const resolved = buildResolvedBacklinks(page.id, page.body, knownIds);
+    for (const target of resolved.targets) inbound[target]++;
+    for (const unresolved of resolved.unresolved) {
+      const sources = gapSources.get(unresolved.target) ?? new Set<string>();
+      sources.add(page.id);
+      gapSources.set(unresolved.target, sources);
+      missingPages++;
+      findings.push(`Missing page: ${unresolved.target} (in ${page.id})`);
     }
   }
 
+  let orphans = 0;
   for (const page of pages) {
-    if (!linkCounts[page.relative] || linkCounts[page.relative] === 0) {
+    if (inbound[page.id] === 0) {
       orphans++;
-      findings.push(`Orphan: [[${page.relative}]] has no inbound links`);
+      findings.push(`Orphan: ${page.id} has no inbound links`);
     }
-  }
-
-  for (const page of pages) {
-    if (page.content.includes("⚠️ **Contradiction")) {
+    if (page.body.includes("⚠️ **Contradiction")) {
       contradictions++;
-      findings.push(`Contradiction flagged in [[${page.relative}]]`);
+      findings.push(`Contradiction flagged in ${page.id}`);
     }
   }
 
+  const gaps = [...gapSources.entries()]
+    .map(([topic, sources]) => ({ topic, mentionedBy: [...sources].sort(compareCodePoint) }))
+    .sort((left, right) => compareCodePoint(left.topic, right.topic));
   let fixesApplied = 0;
   if (autoFix) {
     for (const gap of gaps) {
-      if (gap.mentionedBy.length >= 2) {
-        const folder = gap.topic.includes("/") ? gap.topic.split("/")[0] : "concepts";
-        const name = gap.topic.includes("/") ? gap.topic.split("/").pop()! : gap.topic;
-        const pagePath = join(paths.wiki, folder, `${name}.md`);
-        mkdirSync(join(paths.wiki, folder), { recursive: true });
-        try {
-          // Atomic create-if-absent: the `wx` flag fails with EEXIST instead of
-          // overwriting, avoiding the existsSync→write TOCTOU race (CodeQL).
-          writeFileSync(
-            pagePath,
-            `---\ntype: concept\ncreated: ${fmtDate()}\nupdated: ${fmtDate()}\nsources: []\nstatus: stub\n---\n\n# ${name.replace(/-/g, " ")}\n\n_Stub auto-created by lint. Expand with content from: ${gap.mentionedBy.map((r) => `[[${r}]]`).join(", ")}_\n`,
-            { encoding: "utf-8", flag: "wx" },
-          );
-          fixesApplied++;
-        } catch (err) {
-          // Page already exists — nothing to fix. Re-throw anything else.
-          if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-        }
+      if (gap.mentionedBy.length < 2) continue;
+      const parts = gap.topic.split("/");
+      const name =
+        parts.length === 1
+          ? parts[0]
+          : parts.length === 2 && parts[0] === "concepts"
+            ? parts[1]
+            : "";
+      if (!name || slugify(name) !== name) continue;
+      const pagePath = join(paths.wiki, "concepts", `${name}.md`);
+      mkdirSync(join(paths.wiki, "concepts"), { recursive: true });
+      const document = createKnowledgeDocument(
+        `concepts/${name}.md`,
+        {
+          type: "concept",
+          title: name.replace(/-/g, " "),
+          created: fmtDate(),
+          updated: fmtDate(),
+          status: "stub",
+        },
+        `_Stub auto-created by lint. Expand with content from: ${gap.mentionedBy
+          .map((source) => `[${source}](/${source}.md)`)
+          .join(", ")}_`,
+      );
+      try {
+        writeFileSync(pagePath, serializeKnowledgeDocument(document), {
+          encoding: "utf8",
+          flag: "wx",
+        });
+        fixesApplied++;
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
     }
   }
@@ -921,7 +922,6 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     gaps,
     generated: new Date().toISOString(),
   });
-
   const reportLines = [
     "# Wiki Lint Report",
     `Generated: ${fmtDate()}`,
@@ -934,14 +934,12 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     autoFix ? `- Fixes applied: ${fixesApplied}` : "",
     "",
     "## Findings",
-    findings.length > 0 ? findings.map((f) => `- ${f}`).join("\n") : "✅ No issues found!",
+    findings.length ? findings.map((finding) => `- ${finding}`).join("\n") : "✅ No issues found!",
     "",
   ].filter(Boolean);
-
   const reportPath = join(paths.outputs, `lint-${fmtDate()}.md`);
   mkdirSync(paths.outputs, { recursive: true });
-  writeFileSync(reportPath, `${reportLines.join("\n")}\n`, "utf-8");
-
+  writeFileSync(reportPath, `${reportLines.join("\n")}\n`, "utf8");
   appendEvent(paths, {
     kind: "lint",
     orphans,
@@ -949,7 +947,6 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     contradictions,
     auto_fix: autoFix,
   });
-
   rebuildMetadataLight(paths);
 
   return [
@@ -962,7 +959,7 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     autoFix ? `- Auto-fixes: ${fixesApplied}` : "",
     "",
     `📄 Report: \`${reportPath}\``,
-    gaps.length > 0 ? `💡 ${gaps.length} knowledge gap(s) tracked` : "",
+    gaps.length ? `💡 ${gaps.length} knowledge gap(s) tracked` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -989,18 +986,10 @@ export function registerWikiStatus(pi: ExtensionAPI): void {
         };
       }
 
-      const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
-        version: "1.0",
-        last_updated: "",
-        pages: {},
-      });
-      const backlinks = readJson<Record<string, string[]>>(join(paths.meta, "backlinks.json"), {});
+      const { getWikiStatus } = await import("./wiki-service.js");
+      const status = getWikiStatus(paths);
       const config = readJson<Record<string, unknown>>(join(paths.dotWiki, "config.json"), {});
-
-      const byType: Record<string, number> = {};
-      for (const entry of Object.values(registry.pages)) {
-        byType[entry.type] = (byType[entry.type] || 0) + 1;
-      }
+      const backlinks = readJson<Record<string, string[]>>(join(paths.meta, "backlinks.json"), {});
 
       const orphanCount = Object.entries(backlinks).filter(
         ([, inbound]) => inbound.length === 0,
@@ -1010,23 +999,30 @@ export function registerWikiStatus(pi: ExtensionAPI): void {
       });
 
       const health =
-        Object.keys(registry.pages).length === 0
-          ? "🔴 Empty"
-          : orphanCount > 5
-            ? "⚠️ Warning"
-            : "✅ Good";
+        status.totalPages === 0 ? "🔴 Empty" : orphanCount > 5 ? "⚠️ Warning" : "✅ Good";
+
+      const diagLines =
+        status.blockingDiagnostics.length > 0
+          ? [
+              "",
+              "⚠️ Blocking diagnostics:",
+              ...status.blockingDiagnostics.map((d) => `  - ${d.code}: ${d.message}`),
+            ]
+          : [];
 
       const lines = [
         "📊 LLM Wiki Status",
         "══════════════════",
         `Topic: ${config.topic || "Unknown"}`,
         `Mode: ${config.mode || "personal"}`,
-        `Pages: ${Object.keys(registry.pages).length}`,
-        ...Object.entries(byType).map(([t, c]) => `  - ${t}s: ${c}`),
+        `Knowledge format: ${status.knowledgeFormat}`,
+        `Pages: ${status.totalPages}`,
+        ...Object.entries(status.byType).map(([t, c]) => `  - ${t}s: ${c}`),
         `Orphans: ${orphanCount}`,
         `Gaps: ${gaps.gaps?.length || 0}`,
         `Health: ${health}`,
-        `Last updated: ${registry.last_updated || "Never"}`,
+        `Last updated: ${status.lastUpdated || "Never"}`,
+        ...diagLines,
       ];
 
       return {
@@ -1034,11 +1030,13 @@ export function registerWikiStatus(pi: ExtensionAPI): void {
         details: {
           topic: config.topic,
           mode: config.mode,
-          totalPages: Object.keys(registry.pages).length,
-          byType,
+          knowledgeFormat: status.knowledgeFormat,
+          totalPages: status.totalPages,
+          byType: status.byType,
           orphans: orphanCount,
           gaps: gaps.gaps?.length || 0,
           health,
+          blockingDiagnostics: status.blockingDiagnostics,
         } as Record<string, unknown>,
       };
     },
@@ -1057,11 +1055,16 @@ export function registerWikiRebuildMeta(pi: ExtensionAPI, runtime?: Runtime): vo
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const vaultCheck = requireVault(paths);
+      const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
         return {
-          content: [{ type: "text", text: vaultCheck.reason }],
-          details: { error: vaultCheck.reason } as Record<string, unknown>,
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
@@ -1073,8 +1076,11 @@ export function registerWikiRebuildMeta(pi: ExtensionAPI, runtime?: Runtime): vo
         started:
           "\u{1F9E0} LLM Wiki: metadata rebuild started in the background — the result will be reported when it completes.",
         work: async () => {
-          rebuildMetadata(paths);
-          appendEvent(paths, { kind: "rebuild_meta" });
+          const result = rebuildMetadata(paths);
+          // No rebuild_meta event — rebuild is a projection, not an authoritative mutation
+          if (!result.ok) {
+            return `⚠️ LLM Wiki: rebuild had issues — ${result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("; ")}`;
+          }
           const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
             version: "1.0",
             last_updated: "",
@@ -1109,11 +1115,16 @@ export function registerWikiReindexEmbeddings(pi: ExtensionAPI, runtime?: Runtim
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const vaultCheck = requireVault(paths);
+      const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
         return {
-          content: [{ type: "text", text: vaultCheck.reason }],
-          details: { error: vaultCheck.reason } as Record<string, unknown>,
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
@@ -1167,25 +1178,45 @@ export function registerWikiLogEvent(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
-      const vaultCheck = requireVault(paths);
+      const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
         return {
-          content: [{ type: "text", text: vaultCheck.reason }],
-          details: { error: vaultCheck.reason } as Record<string, unknown>,
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }
 
-      appendEvent(paths, { kind: params.kind, ...params.details });
+      const kind = typeof params.kind === "string" ? params.kind.trim() : "";
+      if (!kind) {
+        return {
+          content: [{ type: "text", text: "Event kind must be a non-empty string" }],
+          details: { error: "event_missing_kind" } as Record<string, unknown>,
+          isError: true,
+        };
+      }
+      const details = params.details ?? {};
+      if (Object.hasOwn(details, "kind") || Object.hasOwn(details, "timestamp")) {
+        return {
+          content: [{ type: "text", text: "Event details cannot override kind or timestamp" }],
+          details: { error: "event_reserved_field" } as Record<string, unknown>,
+          isError: true,
+        };
+      }
 
-      // Regenerate log.md
-      const { buildLogMarkdown } = await import("./metadata.js");
-      const log = buildLogMarkdown(paths);
-      writeFileSync(join(paths.meta, "log.md"), log, "utf-8");
+      appendEvent(paths, { kind, ...details });
+
+      // Regenerate projections
+      rebuildMetadata(paths);
 
       return {
-        content: [{ type: "text", text: `✅ Event logged: ${params.kind}` }],
-        details: { kind: params.kind } as Record<string, unknown>,
+        content: [{ type: "text", text: `✅ Event logged: ${kind}` }],
+        details: { kind } as Record<string, unknown>,
       };
     },
   });

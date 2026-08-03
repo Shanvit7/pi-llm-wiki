@@ -1,15 +1,17 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
+  realpathSync,
   renameSync,
   rmdirSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 /**
@@ -33,13 +35,12 @@ export type VaultFormat = "new" | "legacy" | "none";
 
 /**
  * Detect the vault format at a given directory.
- * Returns "new" if .llm-wiki/config.json exists,
- * "legacy" if .wiki/config.json exists,
- * "none" otherwise.
+ * Returns "new" if .llm-wiki exists, "legacy" if .wiki exists,
+ * and "none" otherwise. A missing config is still a detected, damaged vault.
  */
 export function detectVaultFormat(dir: string): VaultFormat {
-  if (existsSync(join(dir, ".llm-wiki", "config.json"))) return "new";
-  if (existsSync(join(dir, ".wiki", "config.json"))) return "legacy";
+  if (existsSync(join(dir, ".llm-wiki"))) return "new";
+  if (existsSync(join(dir, ".wiki"))) return "legacy";
   return "none";
 }
 
@@ -134,8 +135,12 @@ export function isPersonalVault(paths: VaultPaths): boolean {
  * 4. Fallback: ~/.llm-wiki/ (create personal wiki)
  */
 export function resolveVaultRoot(cwd: string): string {
-  // Check for any vault format at cwd
+  // A vault rooted at cwd is always the project-local choice.
   if (detectVaultFormat(cwd) !== "none") return cwd;
+
+  // An explicit WIKI_HOME is a testable/user-selected fallback and must win
+  // over an unrelated personal vault found while walking parent directories.
+  if (process.env.WIKI_HOME) return process.env.WIKI_HOME;
 
   // Walk up looking for a vault sentinel (new or legacy)
   let dir = cwd;
@@ -271,113 +276,17 @@ function nextSequentialId(dir: string, kind: string): string {
   return `${prefix}-${String(num + 1).padStart(3, "0")}`;
 }
 
-/** Parse a small, dependency-free YAML scalar/inline-array value. */
-function parseFrontmatterValue(raw: string, unquote = false): unknown {
-  const trimmed = raw.trim();
-  const unquoted = (value: string) => value.replace(/^(["'])(.*)\1$/, "$2").trim();
-
-  if (!trimmed) return "";
-
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    const inner = trimmed.slice(1, -1).trim();
-    if (!inner) return [];
-    return inner.split(",").map((item) => unquoted(item.trim()));
-  }
-
-  return unquote ? unquoted(trimmed) : trimmed;
-}
-
-/** Extract frontmatter from markdown. */
-export function parseFrontmatter(content: string): {
-  frontmatter: Record<string, unknown>;
-  body: string;
-} {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return { frontmatter: {}, body: content };
-
-  const frontmatter: Record<string, unknown> = {};
-  const lines = match[1].split("\n");
-  let currentListKey: string | null = null;
-
-  for (const line of lines) {
-    const listMatch = line.match(/^\s*-\s+(.*)$/);
-    if (listMatch && currentListKey) {
-      const current = frontmatter[currentListKey];
-      const list = Array.isArray(current) ? current : [];
-      list.push(parseFrontmatterValue(listMatch[1], true));
-      frontmatter[currentListKey] = list;
-      continue;
-    }
-
-    const idx = line.indexOf(":");
-    if (idx <= 0) {
-      currentListKey = null;
-      continue;
-    }
-
-    const key = line.slice(0, idx).trim();
-    const val = line.slice(idx + 1).trim();
-
-    if (!val) {
-      frontmatter[key] = [];
-      currentListKey = key;
-    } else {
-      frontmatter[key] = parseFrontmatterValue(val);
-      currentListKey = null;
-    }
-  }
-  return { frontmatter, body: match[2] };
-}
-
-/** Find all wiki pages recursively. */
-export function findWikiPages(
-  wikiDir: string,
-): Array<{ path: string; relative: string; content: string }> {
-  const results: Array<{ path: string; relative: string; content: string }> = [];
-
-  function walk(dir: string, rel: string) {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry);
-      const stat = statSync(full);
-      if (stat.isDirectory()) {
-        walk(full, rel ? `${rel}/${entry}` : entry);
-      } else if (entry.endsWith(".md")) {
-        results.push({
-          path: full,
-          relative: rel ? `${rel}/${entry.slice(0, -3)}` : entry.slice(0, -3),
-          content: readFileSync(full, "utf-8"),
-        });
-      }
-    }
-  }
-
-  walk(wikiDir, "");
-  return results;
-}
-
-/** Extract all [[wikilinks]] from content. */
-export function extractWikilinks(content: string): string[] {
-  const links: string[] = [];
-  const regex = /\[\[([^\]|]+)(?:\|[^\]]*)?\]\]/g;
-  let m: RegExpExecArray | null = regex.exec(content);
-  while (m !== null) {
-    links.push(m[1]);
-    m = regex.exec(content);
-  }
-  return links;
-}
-
 /** Slugify a title. */
 export function slugify(title: string): string {
-  return (
+  const slug =
     title
       .toLocaleLowerCase()
+      .normalize("NFC")
       .replace(/[^\p{L}\p{N}\s-]/gu, "")
       .trim()
       .replace(/\s+/g, "-")
-      .slice(0, 80) || "untitled"
-  );
+      .slice(0, 80) || "untitled";
+  return slug === "index" || slug === "log" ? `${slug}-page` : slug;
 }
 
 /** Format date as YYYY-MM-DD. */
@@ -385,15 +294,75 @@ export function fmtDate(d = new Date()): string {
   return d.toISOString().split("T")[0];
 }
 
-/** Run a shell command via pi.exec. */
+/** Narrow exec-only interface shared by Pi and MCP. */
+export type ExecApi = Pick<ExtensionAPI, "exec">;
+
+/** Run a shell command via pi.exec and reject failed or cancelled commands. */
 export async function exec(
-  pi: ExtensionAPI,
+  pi: ExecApi,
   command: string,
   args: string[],
   options?: { signal?: AbortSignal; timeout?: number; cwd?: string },
-): Promise<{ stdout: string; stderr: string; code: number }> {
+): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }> {
   const result = await pi.exec(command, args, options ?? {});
+  if (result.killed) throw new Error(`Command timed out or was aborted: ${command}`);
+  if (result.code !== 0) {
+    const detail = result.stderr.trim();
+    throw new Error(
+      `Command failed (${command} exited ${result.code})${detail ? `: ${detail}` : ""}`,
+    );
+  }
   return result;
+}
+
+function appendPath(base: string, ...parts: string[]): string {
+  if (parts.length === 0) return base;
+  return `${base}${base.endsWith(sep) ? "" : sep}${parts.join(sep)}`;
+}
+
+function realpathWithMissingTail(path: string, seen = new Set<string>()): string {
+  let current = path;
+  const tail: string[] = [];
+
+  while (true) {
+    try {
+      const stat = lstatSync(current);
+      if (stat.isSymbolicLink()) {
+        const symlinkPath = appendPath(realpathSync.native(dirname(current)), basename(current));
+        if (seen.has(symlinkPath)) throw new Error(`Cannot resolve symlink cycle: ${path}`);
+        seen.add(symlinkPath);
+        const target = readlinkSync(current).toString();
+        const resolvedTarget = isAbsolute(target) ? target : appendPath(dirname(current), target);
+        return realpathWithMissingTail(appendPath(resolvedTarget, ...tail.reverse()), seen);
+      }
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    try {
+      return appendPath(realpathSync.native(current), ...tail.reverse());
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = dirname(current);
+      if (parent === current) throw error;
+      tail.push(basename(current));
+      current = parent;
+    }
+  }
+}
+
+/** Return the candidate path relative to the physical root. */
+export function relativePhysicalPath(rootPath: string, candidatePath: string): string {
+  return relative(realpathWithMissingTail(rootPath), realpathWithMissingTail(candidatePath));
+}
+
+/** Check physical containment, resolving existing symlink ancestors. */
+export function isPathWithin(rootPath: string, candidatePath: string): boolean {
+  const relation = relativePhysicalPath(rootPath, candidatePath);
+  return (
+    relation === "" ||
+    (!isAbsolute(relation) && relation !== ".." && !relation.startsWith(`..${sep}`))
+  );
 }
 
 /** Check if a path is inside a protected directory. */
@@ -401,22 +370,22 @@ export function isProtectedPath(
   absPath: string,
   paths: VaultPaths,
 ): { protected: boolean; reason?: string } {
-  const rawPath = resolve(paths.raw);
-  const metaPath = resolve(paths.meta);
-  const norm = resolve(absPath);
+  try {
+    if (isPathWithin(paths.raw, absPath)) {
+      return {
+        protected: true,
+        reason: "Raw sources are immutable. Use wiki_capture_source to add sources.",
+      };
+    }
+    if (isPathWithin(paths.meta, absPath)) {
+      return {
+        protected: true,
+        reason: "Metadata is auto-generated. Use wiki_rebuild_meta or wiki_log_event instead.",
+      };
+    }
 
-  if (norm.startsWith(`${rawPath}/`) || norm === rawPath) {
-    return {
-      protected: true,
-      reason: "Raw sources are immutable. Use wiki_capture_source to add sources.",
-    };
+    return { protected: false };
+  } catch {
+    return { protected: true, reason: "Cannot safely resolve mutation path." };
   }
-  if (norm.startsWith(`${metaPath}/`) || norm === metaPath) {
-    return {
-      protected: true,
-      reason: "Metadata is auto-generated. Use wiki_rebuild_meta or wiki_log_event instead.",
-    };
-  }
-
-  return { protected: false };
 }

@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
+import { copyFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { createKnowledgeDocument, serializeKnowledgeDocument } from "./knowledge-document.js";
 import { appendEvent } from "./metadata.js";
 import {
   type ExtractedContent,
@@ -9,7 +11,16 @@ import {
   extractUrlContent,
   fileExtractorFor,
 } from "./source-extractors.js";
-import { type VaultPaths, exec, fmtDate, nextSourceId, readText, writeJson } from "./utils.js";
+import {
+  type ExecApi,
+  type VaultPaths,
+  exec,
+  fmtDate,
+  nextSourceId,
+  readText,
+  writeJson,
+} from "./utils.js";
+import { assertWritableVault } from "./vault-format.js";
 
 /**
  * Source packet capture and management.
@@ -47,7 +58,7 @@ const URL_ORIGINAL_EXTENSIONS = new Set([".html", ".htm", ".md", ".pdf", ".txt",
 
 /** Capture a URL into a source packet. */
 export async function captureUrl(
-  pi: ExtensionAPI,
+  pi: ExecApi,
   paths: VaultPaths,
   url: string,
   signal?: AbortSignal,
@@ -57,7 +68,7 @@ export async function captureUrl(
 
 /** Capture a local file into a source packet. */
 export async function captureFile(
-  pi: ExtensionAPI,
+  pi: ExecApi,
   paths: VaultPaths,
   filePath: string,
   signal?: AbortSignal,
@@ -71,6 +82,7 @@ export function captureText(paths: VaultPaths, text: string, title?: string): Ca
 }
 
 async function captureSource(paths: VaultPaths, source: CaptureSource): Promise<CaptureResult> {
+  assertWritableVault(paths);
   const packet = createSourcePacket(paths, source.needsOriginalDir);
   await source.preserveOriginal?.(packet.packetPath);
   const content = await source.extract();
@@ -78,12 +90,13 @@ async function captureSource(paths: VaultPaths, source: CaptureSource): Promise<
 }
 
 function captureSourceSync(paths: VaultPaths, source: CaptureSource): CaptureResult {
+  assertWritableVault(paths);
   const packet = createSourcePacket(paths, source.needsOriginalDir);
   const content = source.extract() as ExtractedContent;
   return finalizeCapture(paths, packet, source, content);
 }
 
-function urlCaptureSource(pi: ExtensionAPI, url: string, signal?: AbortSignal): CaptureSource {
+function urlCaptureSource(pi: ExecApi, url: string, signal?: AbortSignal): CaptureSource {
   return {
     needsOriginalDir: true,
     fallbackText: contentExtractionFailureMessage(url),
@@ -98,11 +111,7 @@ function urlCaptureSource(pi: ExtensionAPI, url: string, signal?: AbortSignal): 
   };
 }
 
-function fileCaptureSource(
-  pi: ExtensionAPI,
-  filePath: string,
-  signal?: AbortSignal,
-): CaptureSource {
+function fileCaptureSource(pi: ExecApi, filePath: string, signal?: AbortSignal): CaptureSource {
   const fileName = filePath.split("/").pop() || "unknown";
   const extractor = fileExtractorFor(filePath);
   const content = extractor.shouldReadText ? readText(filePath) : "";
@@ -110,8 +119,7 @@ function fileCaptureSource(
   return {
     needsOriginalDir: true,
     fallbackText: "",
-    preserveOriginal: (packetPath) =>
-      preserveFileOriginal(pi, packetPath, filePath, fileName, content, signal),
+    preserveOriginal: (packetPath) => preserveFileOriginal(packetPath, filePath, fileName, content),
     extract: async () => {
       // Guard: if we hit the generic catch-all extractor, check for binary magic bytes first
       if (extractor.format === "file") {
@@ -171,6 +179,7 @@ function finalizeCapture(
   source: CaptureSource,
   content: ExtractedContent,
 ): CaptureResult {
+  assertWritableVault(paths);
   const extracted = content.extracted || source.fallbackText;
   const manifest = {
     id: packet.sourceId,
@@ -203,23 +212,21 @@ function finalizeCapture(
 }
 
 async function preserveFileOriginal(
-  pi: ExtensionAPI,
   packetPath: string,
   filePath: string,
   fileName: string,
   fallbackContent: string,
-  signal?: AbortSignal,
 ): Promise<void> {
   try {
-    await exec(pi, "cp", [filePath, join(packetPath, "original", fileName)], { signal });
+    await copyFile(filePath, join(packetPath, "original", fileName));
   } catch {
-    // If cp fails, preserve whatever text content was available.
+    // If copying fails, preserve whatever text content was available.
     writeFileSync(join(packetPath, "original", fileName), fallbackContent, "utf-8");
   }
 }
 
 async function preserveUrlOriginal(
-  pi: ExtensionAPI,
+  pi: ExecApi,
   packetPath: string,
   url: string,
   signal?: AbortSignal,
@@ -268,16 +275,7 @@ function buildSourcePageSkeleton(manifest: Record<string, unknown>, extracted: s
     .trim()
     .slice(0, 500);
 
-  return `---
-type: source
-format: ${format}
-source_id: ${id}
-raw_path: raw/sources/${id}/extracted.md
-captured: ${captured}
-status: skeleton
----
-
-# ${title}${url}
+  const body = `# ${title}${url}
 
 ## Summary
 
@@ -293,11 +291,11 @@ status: skeleton
 
 ## Entities Mentioned
 
-- [[entity-name]]
+- [entity-name](/entities/entity-name.md)
 
 ## Concepts Mentioned
 
-- [[concept-name]]
+- [concept-name](/concepts/concept-name.md)
 
 ## Notable Quotes
 
@@ -305,8 +303,23 @@ status: skeleton
 
 ## Source Packet
 
-- **ID:** \`[[sources/${id}]]\`
+- **ID:** \`sources/${id}\`
 - **Extracted:** [raw/sources/${id}/extracted.md](../raw/sources/${id}/extracted.md)
 - **Manifest:** [raw/sources/${id}/manifest.json](../raw/sources/${id}/manifest.json)
 `;
+
+  const doc = createKnowledgeDocument(
+    `sources/${id}.md`,
+    {
+      type: "source",
+      title,
+      format,
+      source_id: id,
+      raw_path: `raw/sources/${id}/extracted.md`,
+      captured,
+      status: "skeleton",
+    },
+    body,
+  );
+  return serializeKnowledgeDocument(doc);
 }

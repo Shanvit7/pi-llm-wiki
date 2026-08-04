@@ -1,9 +1,19 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { registerWikiRetro, saveInsight } from "../extensions/llm-wiki/lib/retro.js";
 import { ensureVaultStructure, getVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
+import { retroOperation } from "../mcp/operations.js";
 import { readFile } from "./helpers.js";
 
+type TestTool = {
+  execute: (...args: unknown[]) => Promise<{
+    isError?: boolean;
+    content: Array<{ text: string }>;
+    details: Record<string, unknown>;
+  }>;
+};
 describe("wiki retro", () => {
   let wikiDir: string;
   let tmpDir: string;
@@ -48,6 +58,47 @@ describe("wiki retro", () => {
     } catch {}
   });
 
+  it.each(["../../../outside", "../../meta/pwn", "with/slash", ".", "Index", "LOG"])(
+    "rejects unsafe slug %s without writing",
+    (slug) => {
+      const paths = getVaultPaths(wikiDir);
+      expect(() => saveInsight(paths, slug, "Title", "Body")).toThrow("Invalid insight slug");
+      expect(existsSync(join(paths.root, "outside.md"))).toBe(false);
+      expect(existsSync(join(paths.meta, "pwn.md"))).toBe(false);
+    },
+  );
+
+  it("maps unsafe retro slugs to structured Pi and MCP errors", async () => {
+    const paths = getVaultPaths(wikiDir);
+    let tool: TestTool | undefined;
+    registerWikiRetro({
+      registerTool: (definition: unknown) => {
+        tool = definition as TestTool;
+      },
+    } as unknown as ExtensionAPI);
+    if (!tool) throw new Error("wiki_retro was not registered");
+
+    const piResult = await tool.execute(
+      "test",
+      { slug: "../../escape", title: "Title", body: "Body" },
+      undefined,
+      undefined,
+      { cwd: paths.root, hasUI: false },
+    );
+    expect(piResult.isError).toBe(true);
+    expect(piResult.details.error).toBe("invalid_insight_slug");
+
+    const mcpResult = await retroOperation(paths, "../../escape", "Title", "Body");
+    expect(mcpResult).toEqual({
+      ok: false,
+      diagnostics: [
+        { code: "invalid_insight_slug", message: "Invalid insight slug: ../../escape" },
+      ],
+    });
+    expect(existsSync(join(paths.root, "escape.md"))).toBe(false);
+    expect(existsSync(join(paths.meta, "events.jsonl"))).toBe(false);
+  });
+
   it("should save an insight as a single lightweight markdown file", async () => {
     const { saveInsight } = await import("../extensions/llm-wiki/lib/retro.js");
     const paths = getVaultPaths(wikiDir);
@@ -68,7 +119,7 @@ describe("wiki retro", () => {
     expect(existsSync(result.sourcePagePath)).toBe(true);
     const sourcePage = readFile(result.sourcePagePath);
     expect(sourcePage).toContain("type: source");
-    expect(sourcePage).toContain('title: "Test Pattern"');
+    expect(sourcePage).toContain("title: Test Pattern");
     expect(sourcePage).toContain("slug: test-pattern");
     expect(sourcePage).toContain("status: insight");
     expect(sourcePage).toContain("This is a test insight.");
@@ -109,6 +160,6 @@ describe("wiki retro", () => {
       id.startsWith("sources/meta-test"),
     );
     expect(sourcePageId).toBeTruthy();
-    expect(registry.pages[sourcePageId!].title).toBe('"Meta Test"');
+    expect(registry.pages[sourcePageId!].title).toBe("Meta Test");
   });
 });

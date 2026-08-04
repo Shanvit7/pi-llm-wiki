@@ -1,10 +1,11 @@
-import { resolve, sep } from "node:path";
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { scheduleReindex } from "./indexing.js";
 import { rebuildMetadataLight } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
-import { isProtectedPath, resolveVaultPaths } from "./utils.js";
+import { isPathWithin, isProtectedPath, resolveVaultPaths } from "./utils.js";
+import type { VaultPaths } from "./utils.js";
+import { inspectVaultFormat, isGeneratedOkfPath } from "./vault-format.js";
 
 /**
  * Guardrails and auto-rebuild hooks for the LLM Wiki extension.
@@ -172,26 +173,35 @@ export function extractMutationPaths(input: unknown): string[] {
 
 /** True when a write or patch-shaped edit targets a page in the wiki directory. */
 export function hasWikiMutation(input: unknown, wikiPath: string): boolean {
-  const resolvedWikiPath = resolve(wikiPath);
-  return extractMutationPaths(input).some((path) => {
-    const resolvedPath = resolve(path);
-    return (
-      resolvedPath === resolvedWikiPath || resolvedPath.startsWith(`${resolvedWikiPath}${sep}`)
-    );
-  });
+  return extractMutationPaths(input).some((path) => isPathWithin(wikiPath, path));
+}
+
+export function mutationBlockReason(path: string, paths: VaultPaths): string | undefined {
+  const protectedPath = isProtectedPath(path, paths);
+  if (protectedPath.protected) return protectedPath.reason;
+
+  if (isPathWithin(paths.dotWiki, path)) {
+    const state = inspectVaultFormat(paths);
+    if (state.blocking) {
+      return `Wiki vault configuration is invalid: ${state.diagnostics[0].message}`;
+    }
+  }
+
+  if (isGeneratedOkfPath(path, paths)) {
+    return "Generated OKF indexes and log are read-only. Use wiki_rebuild_meta or the page-producing tool that owns the source mutation.";
+  }
+  return undefined;
 }
 
 /** Install guardrails on the extension API. */
 export function installGuardrails(pi: ExtensionAPI, runtime?: Runtime): void {
-  // Block direct edits to raw/ and meta/
+  // Block direct edits to raw/ and meta/, plus OKF generated projections
   pi.on("tool_call", async (event) => {
     if (isToolCallEventType("write", event)) {
       const path = event.input.path as string;
       const paths = resolveVaultPaths(process.cwd());
-      const check = isProtectedPath(path, paths);
-      if (check.protected) {
-        return { block: true, reason: check.reason };
-      }
+      const reason = mutationBlockReason(path, paths);
+      if (reason) return { block: true, reason };
     }
 
     if (isToolCallEventType("edit", event)) {
@@ -203,10 +213,8 @@ export function installGuardrails(pi: ExtensionAPI, runtime?: Runtime): void {
 
       const paths = resolveVaultPaths(process.cwd());
       for (const path of targetPaths) {
-        const check = isProtectedPath(path, paths);
-        if (check.protected) {
-          return { block: true, reason: check.reason };
-        }
+        const reason = mutationBlockReason(path, paths);
+        if (reason) return { block: true, reason };
       }
     }
   });

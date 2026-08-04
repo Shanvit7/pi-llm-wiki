@@ -10,6 +10,7 @@ import {
   readEmbeddingStore,
   resolveEmbedder,
 } from "./embeddings.js";
+import { parseKnowledgeDocument } from "./knowledge-document.js";
 import type { Registry } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
 import type { TaskConfig } from "./task-config.js";
@@ -17,10 +18,10 @@ import {
   type VaultPaths,
   getPersonalWikiPaths,
   isPersonalVault,
-  parseFrontmatter,
   readJson,
   resolveVaultPaths,
 } from "./utils.js";
+import { inspectVaultFormat } from "./vault-format.js";
 
 // ─── Public API ────────────────────────────────────────
 
@@ -296,8 +297,19 @@ function chunkPage(body: string): PageChunk[] {
   return chunks;
 }
 
+function parsePage(
+  path: string,
+  id: string,
+): { frontmatter: Record<string, unknown>; body: string } | undefined {
+  if (!existsSync(path)) return undefined;
+  const content = readFileSync(path, "utf-8");
+  const result = parseKnowledgeDocument(content, `${id}.md`);
+  if (!result.ok) return undefined;
+  return { frontmatter: result.document.frontmatter, body: result.document.body };
+}
+
 function pagePreview(content: string): string {
-  const { body } = parseFrontmatter(content);
+  const body = content.replace(/^---\n[\s\S]*?\n---\n?/, "");
   return body.trim().slice(0, 200).replace(/\n/g, " ");
 }
 
@@ -330,7 +342,7 @@ function extractExpansionTerms(
   const originalNorm = normalizeText(originalQuery);
   const termFreq = new Map<string, number>();
 
-  for (const { pagePath, entry } of topResults) {
+  for (const { id, pagePath, entry } of topResults) {
     // Collect text from registry metadata + file content
     const metaText = normalizeText(
       [entry.title, entry.aliases, entry.tags, entry.summary, entry.description]
@@ -345,12 +357,13 @@ function extractExpansionTerms(
 
     // Also extract from file body
     if (existsSync(pagePath)) {
-      const content = readFileSync(pagePath, "utf-8");
-      const { body } = parseFrontmatter(content);
-      const bodyNorm = normalizeText(body);
-      for (const w of bodyNorm.split(/\s+/)) {
-        if (w.length >= 4 && !originalNorm.includes(w) && !STOPWORDS.has(w)) {
-          termFreq.set(w, (termFreq.get(w) || 0) + 1);
+      const parsed = parsePage(pagePath, id);
+      if (parsed) {
+        const bodyNorm = normalizeText(parsed.body);
+        for (const w of bodyNorm.split(/\s+/)) {
+          if (w.length >= 4 && !originalNorm.includes(w) && !STOPWORDS.has(w)) {
+            termFreq.set(w, (termFreq.get(w) || 0) + 1);
+          }
         }
       }
     }
@@ -394,8 +407,11 @@ export function searchWiki(
 
   for (const [id, entry] of Object.entries(registry.pages)) {
     const pagePath = join(paths.wiki, `${id}.md`);
-    const content = existsSync(pagePath) ? readFileSync(pagePath, "utf-8") : "";
-    const { frontmatter, body } = parseFrontmatter(content);
+    const pageExists = existsSync(pagePath);
+    const parsed = parsePage(pagePath, id);
+    if (pageExists && !parsed) continue;
+    const frontmatter = parsed?.frontmatter ?? {};
+    const body = parsed?.body ?? "";
 
     let score = 0;
 
@@ -405,8 +421,7 @@ export function searchWiki(
     score += scoreField(frontmatter.title, terms, 5);
     score += scoreField(entry.type, terms, 1);
 
-    // Recall-oriented metadata. Arrays are supported by parseFrontmatter and
-    // legacy comma/bracket strings still flatten into searchable text.
+    // Recall-oriented metadata.
     score += scoreField(entry.aliases, terms, 6);
     score += scoreField(frontmatter.aliases, terms, 6);
     score += scoreField(entry.recall_triggers, terms, 7);
@@ -489,8 +504,8 @@ export function searchWiki(
     // Apply expansion scoring to the top 25 results (cheap re-read)
     const expansionCandidates = scored.slice(0, Math.min(25, scored.length));
     for (const item of expansionCandidates) {
-      const content = existsSync(item.pagePath) ? readFileSync(item.pagePath, "utf-8") : "";
-      const { body } = parseFrontmatter(content);
+      const parsed = parsePage(item.pagePath, item.id);
+      const body = parsed?.body ?? "";
       let expChunkScore = 0;
       if (body.trim()) {
         const chunks = chunkPage(body);
@@ -960,6 +975,10 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
       }
 
       const maxResults = Math.min(params.max_results ?? 5, 10);
+      const vaultDiagnostics = inspectVaultFormat(paths).diagnostics;
+      const diagnosticText = vaultDiagnostics.length
+        ? `\n\nDiagnostics: ${vaultDiagnostics.map((diagnostic) => diagnostic.code).join(", ")}`
+        : "";
       // Use layered hybrid search: personal vault + project vault, blending
       // lexical scoring with precomputed semantic embeddings when available.
       // No embeddings / no embedder => pure lexical, no network call.
@@ -973,10 +992,14 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
           content: [
             {
               type: "text",
-              text: `No wiki pages found matching "${params.query}". The wiki is empty — use wiki_retro to start building knowledge.`,
+              text: `No wiki pages found matching "${params.query}". The wiki is empty — use wiki_retro to start building knowledge.${diagnosticText}`,
             },
           ],
-          details: { query: params.query, matches: [] } as Record<string, unknown>,
+          details: {
+            query: params.query,
+            matches: [],
+            diagnostics: vaultDiagnostics,
+          } as Record<string, unknown>,
         };
       }
 
@@ -997,19 +1020,22 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
             return `${i + 1}. [[${r.id}]] — ${r.title} (${r.type}, score ${r.score.toFixed(1)})${vault}\n   Path: ${r.path}${tail}`;
           })
           .join("\n");
-        const text = [
-          `Found ${results.length} wiki page(s) matching "${params.query}"${layerTag} (two-stage recall — ranked links, expand on demand):`,
-          "",
-          linkLines,
-          "",
-          "Call `read` on the path(s) you need to pull full content.",
-        ].join("\n");
+        const text =
+          [
+            `Found ${results.length} wiki page(s) matching "${params.query}"${layerTag} (two-stage recall — ranked links, expand on demand):`,
+            "",
+            linkLines,
+            "",
+            "Call `read` on the path(s) you need to pull full content.",
+          ].join("\n") + diagnosticText;
         return {
           content: [{ type: "text", text }],
-          details: { query: params.query, mode: "links", matches: results } as Record<
-            string,
-            unknown
-          >,
+          details: {
+            query: params.query,
+            mode: "links",
+            matches: results,
+            diagnostics: vaultDiagnostics,
+          } as Record<string, unknown>,
         };
       }
 
@@ -1022,13 +1048,15 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
                 const vault = r.vaultLabel ? ` ${r.vaultLabel}` : "";
                 return `## [[${r.id}]] — ${r.title}${vault}\nType: ${r.type}\nPath: ${r.path}\n\n${r.preview}`;
               })
-              .join("\n\n---\n\n")}`,
+              .join("\n\n---\n\n")}${diagnosticText}`,
           },
         ],
-        details: { query: params.query, mode: "preview", matches: results } as Record<
-          string,
-          unknown
-        >,
+        details: {
+          query: params.query,
+          mode: "preview",
+          matches: results,
+          diagnostics: vaultDiagnostics,
+        } as Record<string, unknown>,
       };
     },
   });

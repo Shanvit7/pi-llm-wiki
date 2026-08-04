@@ -1,11 +1,12 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { scheduleReindex } from "./indexing.js";
+import { createKnowledgeDocument, writeKnowledgeDocumentFile } from "./knowledge-document.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
 import { type VaultPaths, fmtDate, resolveVaultPaths } from "./utils.js";
+import { assertWritableVault, inspectWritableVault } from "./vault-format.js";
 
 // ─── Types ─────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ export function saveObservation(
   input: ObservationInput,
   opts?: { rebuild?: boolean },
 ): ObservationResult {
+  assertWritableVault(paths);
   const today = fmtDate();
   const timestamp = new Date().toISOString();
 
@@ -62,50 +64,38 @@ export function saveObservation(
     .slice(0, 60);
   const slug = `obs-${today}-${slugBase}`;
 
-  // Write to wiki/sources/{slug}.md
-  const sourcePageDir = join(paths.wiki, "sources");
-  mkdirSync(sourcePageDir, { recursive: true });
-  const pagePath = join(sourcePageDir, `${slug}.md`);
+  const pagePath = join(paths.wiki, "sources", `${slug}.md`);
 
   const relevanceEmoji = RELEVANCE_EMOJIS[input.relevance] ?? "📝";
   const tags = input.tags ?? "";
   const sourceContext = input.source_context ?? "";
 
-  const pageContent = [
-    "---",
-    "type: source",
-    `title: "Observation: ${input.title}"`,
-    `slug: ${slug}`,
-    "status: observation",
-    `created: ${today}`,
-    `updated: ${today}`,
-    `relevance: ${input.relevance}`,
-    `observed_at: ${timestamp}`,
-    tags
-      ? `tags: [${tags
-          .split(/\s+/)
-          .filter(Boolean)
-          .map((t) => `"${t}"`)
-          .join(", ")}]`
-      : "",
-    sourceContext ? `source_context: "${sourceContext}"` : "",
-    "---",
-    "",
-    `# ${relevanceEmoji} Observation: ${input.title}`,
-    "",
-    input.content,
-    "",
-    `*Relevance: ${input.relevance}*`,
-    sourceContext ? `\n*Context: ${sourceContext}*` : "",
-    tags ? `\n*Tags: ${tags}*` : "",
-    "",
-    "---",
-    `*Observed: ${timestamp}*`,
-    "",
-  ]
-    .filter((l) => l !== "")
-    .join("\n");
-  writeFileSync(pagePath, pageContent, "utf-8");
+  const body = `# ${relevanceEmoji} Observation: ${input.title}
+
+${input.content}
+
+*Relevance: ${input.relevance}*${sourceContext ? `\n*Context: ${sourceContext}*` : ""}${tags ? `\n*Tags: ${tags}*` : ""}
+
+---
+*Observed: ${timestamp}*`;
+
+  const doc = createKnowledgeDocument(
+    `sources/${slug}.md`,
+    {
+      type: "source",
+      title: `Observation: ${input.title}`,
+      slug,
+      status: "observation",
+      created: today,
+      updated: today,
+      relevance: input.relevance,
+      observed_at: timestamp,
+      ...(tags ? { tags: tags.split(/\s+/).filter(Boolean) } : {}),
+      ...(sourceContext ? { source_context: sourceContext } : {}),
+    },
+    body,
+  );
+  writeKnowledgeDocumentFile(pagePath, doc);
 
   // Log event
   appendEvent(paths, {
@@ -213,15 +203,19 @@ export function registerWikiObserve(
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = resolveVaultPaths(ctx.cwd ?? process.cwd());
 
-      if (!existsSync(join(paths.dotWiki, "config.json"))) {
+      const vaultCheck = inspectWritableVault(paths);
+      if (!vaultCheck.ok) {
         return {
           content: [
             {
               type: "text",
-              text: "No wiki vault found at this location. Initialize one with wiki_bootstrap first.",
+              text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}`,
             },
           ],
-          details: { error: "no_vault" } as Record<string, unknown>,
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
           isError: true,
         };
       }

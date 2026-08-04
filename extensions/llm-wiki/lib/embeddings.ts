@@ -3,10 +3,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { join } from "node:path";
+import { parseKnowledgeDocument } from "./knowledge-document.js";
 import type { Registry } from "./metadata.js";
 import type { LaunchCtx, Runtime } from "./runtime.js";
 import type { TaskConfig } from "./task-config.js";
-import { type VaultPaths, parseFrontmatter, readJson, writeJson } from "./utils.js";
+import { type VaultPaths, readJson, writeJson } from "./utils.js";
+import { assertWritableVault } from "./vault-format.js";
 
 /**
  * Background semantic embeddings, computed at write time (issue #66, epic #63).
@@ -166,6 +168,7 @@ export function readEmbeddingStore(paths: VaultPaths): EmbeddingStore {
 }
 
 export function writeEmbeddingStore(paths: VaultPaths, store: EmbeddingStore): void {
+  assertWritableVault(paths);
   writeJson(embeddingStorePath(paths), store);
 }
 
@@ -189,8 +192,9 @@ function readPageText(paths: VaultPaths, id: string): PageText | undefined {
   const pagePath = join(paths.wiki, `${id}.md`);
   if (!existsSync(pagePath)) return undefined;
   const raw = readFileSync(pagePath, "utf-8");
-  const { frontmatter, body } = parseFrontmatter(raw);
-  const text = buildEmbeddingText(id, frontmatter, body);
+  const result = parseKnowledgeDocument(raw, `${id}.md`);
+  if (!result.ok) return undefined;
+  const text = buildEmbeddingText(id, result.document.frontmatter, result.document.body);
   return { id, text, hash: contentHash(text) };
 }
 
@@ -205,6 +209,7 @@ export async function embedPages(
   embedder: Embedder,
   opts: { force?: boolean } = {},
 ): Promise<EmbedStats> {
+  assertWritableVault(paths);
   const store = readEmbeddingStore(paths);
   const targets: PageText[] = [];
   let skipped = 0;
@@ -251,6 +256,7 @@ export async function reindexEmbeddings(
   embedder: Embedder,
   opts: { force?: boolean } = {},
 ): Promise<ReindexStats> {
+  assertWritableVault(paths);
   const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
     version: "1.0",
     last_updated: "",

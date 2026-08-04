@@ -25,6 +25,14 @@ Turn raw sources (URLs, PDFs, markdown, JSON, XML) into a durable, interlinked, 
 
 ---
 
+## Demo
+
+<div align="center">
+  <img src="./assets/demo.gif" alt="pi-llm-wiki demo" width="1920" />
+</div>
+
+---
+
 ## Quick Start
 
 ```bash

@@ -112,6 +112,33 @@ describe("commitSynthesis", () => {
     expect(readFileSync(existing, "utf-8")).toBe("PRE-EXISTING CONTENT");
   });
 
+  it("uses stable canonical slugs when linking existing pages", () => {
+    const paths = getVaultPaths(wikiDir);
+    writeFileSync(join(paths.wiki, "entities", "①.md"), "NUMBERED ENTITY", "utf-8");
+    writeFileSync(join(paths.wiki, "concepts", "abc.md"), "ASCII CONCEPT", "utf-8");
+
+    const res = commitSynthesis(
+      paths,
+      "SRC-001",
+      MANIFEST,
+      {
+        summary: "s",
+        key_takeaways: [],
+        entities: [{ title: "①", description: "Numbered entity" }],
+        concepts: [{ title: "ＡＢＣ", definition: "Full-width concept" }],
+      },
+      "2026-06-06",
+    );
+
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.entitiesLinked).toEqual(["①"]);
+    expect(res.conceptsLinked).toEqual(["abc"]);
+    expect(res.entitiesCreated).toEqual([]);
+    expect(res.conceptsCreated).toEqual([]);
+    expect(existsSync(join(paths.wiki, "entities", "1.md"))).toBe(false);
+  });
+
   it("appends an ingest event and rebuilds registry on metadata rebuild", () => {
     const paths = getVaultPaths(wikiDir);
     const res = commitSynthesis(paths, "SRC-001", MANIFEST, DATA, "2026-06-06");

@@ -13,10 +13,13 @@ describe("slugify", () => {
     expect(slugify("   ")).toBe("untitled");
   });
 
-  it("should fold full-width forms to ASCII (NFKC)", () => {
+  it("should fold full-width ASCII forms without changing other Unicode identities", () => {
     expect(slugify("ＡＢＣ")).toBe("abc");
     expect(slugify("１２３")).toBe("123");
     expect(slugify("Ｆｕｌｌ　Ｗｉｄｔｈ")).toBe("full-width");
+    expect(slugify("①")).toBe("①");
+    expect(slugify("ﬁ")).toBe("ﬁ");
+    expect(slugify("™")).toBe("untitled");
   });
 
   it("should collapse whitespace and existing hyphens", () => {
@@ -25,9 +28,11 @@ describe("slugify", () => {
     expect(slugify("中文 - 标题")).toBe("中文-标题");
   });
 
-  it("should trim leading and trailing hyphens", () => {
+  it("should trim edge hyphens after Unicode-safe truncation", () => {
     expect(slugify("- foo -")).toBe("foo");
     expect(slugify("---")).toBe("untitled");
+    expect(slugify(`${"a".repeat(79)}-b`)).toBe("a".repeat(79));
+    expect(slugify(`${"a".repeat(79)}𐐀`)).toBe("a".repeat(79));
   });
 
   it("should guard Windows reserved device names", () => {
@@ -35,6 +40,8 @@ describe("slugify", () => {
     expect(slugify("CON")).toBe("_con");
     expect(slugify("COM1")).toBe("_com1");
     expect(slugify("LPT9")).toBe("_lpt9");
+    expect(slugify("COM¹")).toBe("_com¹");
+    expect(slugify("LPT³")).toBe("_lpt³");
     expect(slugify("NUL")).toBe("_nul");
     expect(slugify("console")).toBe("console");
   });
@@ -44,5 +51,7 @@ describe("slugify", () => {
     expect(slugify("log")).toBe("log-page");
     expect(slugify("Index")).toBe("index-page");
     expect(slugify("index-page")).toBe("index-page");
+    expect(slugify("ᴵndex")).toBe("ᴵndex");
+    expect(slugify("ᴸog")).toBe("ᴸog");
   });
 });

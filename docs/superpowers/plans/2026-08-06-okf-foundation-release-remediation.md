@@ -1126,6 +1126,34 @@ Expected: every required Node, CodeQL, lint, and package check passes. Record th
 
 ---
 
+## Live-vault acceptance addendum
+
+A guarded acceptance run against the real 634-file personal vault found two release gaps that fixture-only validation missed:
+
+1. Process interruption after the first move leaves a partial layout with no restart protocol.
+2. Fifteen historical pages are not accepted by the strict parser (seven missing frontmatter, two missing `type`, and six invalid YAML), so metadata rebuild blocks even though the existing registry still supports reads.
+
+### Task 6: Make layout migration resumable
+
+- [x] Persist a durable migration journal before the first move.
+- [x] Reserve the destination root atomically after confirmation.
+- [x] Hash each planned source and verify each resumed destination before trusting it.
+- [x] Recover the hard-link-created/before-source-unlink crash state.
+- [x] Flush journal, marker, and moved directory entries at durability boundaries.
+- [x] Add a real subprocess `SIGKILL` test that resumes and verifies every original byte.
+
+### Task 7: Repair malformed legacy pages through the existing lint surface
+
+- [x] Keep `wiki_lint auto_fix=false` read-only and report projection blockers.
+- [x] On explicit `auto_fix=true`, repair only recoverable legacy frontmatter failures.
+- [x] Back up every original page under `outputs/legacy-repair-*/wiki/` before replacement.
+- [x] Record old/new SHA-256 values and diagnostics in a repair manifest.
+- [x] Preserve valid legacy metadata, archive unparseable raw frontmatter, and retain page bodies.
+- [x] Rebuild projections only after every repaired page parses successfully.
+- [x] Repeat the guarded live-vault migration, repair, OKF projection, real Pi tool, injection, MCP, restart, and interruption acceptance run.
+
+---
+
 ## Acceptance criteria
 
 The PR is ready for merge only when all statements below are true:

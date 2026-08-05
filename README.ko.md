@@ -35,6 +35,26 @@ Follows Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/44
 
 원시 소스(URL, PDF, 마크다운, JSON, XML)를 시간이 지남에 따라 축적되는 내구성 있고 상호 연결된 LLM 유지 관리 Wiki로 변환합니다.
 
+### Open Knowledge Format (OKF) v0.2 네이티브 지원
+
+폐쇄적인 앱 전용 내보내기가 아니라 계속 활용할 수 있는 지식 베이스를 구축하세요:
+
+- **이식 가능한 OKF v0.2 문서 생성** — 표준 frontmatter, 표준 Markdown 링크, 안정적인 소스 인용을 사용합니다.
+- **레거시 및 OKF 페이지를 모두 읽기** — 기존 vault를 자동 migration이나 재작성 없이 계속 사용할 수 있습니다.
+- **권위 있는 페이지에서 결정론적 index와 log 생성** — 탐색과 metadata를 재현 가능하게 유지합니다.
+- **Pi 또는 MCP에서 동일한 지식 모델 사용** — Claude Code, Cursor, Windsurf 및 기타 MCP 클라이언트에서 사용할 수 있습니다.
+- **Obsidian 호환성 유지** — Open Knowledge Format을 지원하는 도구에서 바로 사용할 수 있는 지식을 구축합니다.
+
+새 OKF vault로 시작하거나, 기존 vault에 pi-llm-wiki를 연결하고 원하는 시점에 형식을 도입하세요. 구현 세부 사항은 [OKF Foundation 사양](docs/superpowers/specs/2026-08-02-okf-foundation-design.md)을 참조하세요.
+
+---
+
+## 데모
+
+<div align="center">
+  <img src="./assets/demo.gif" alt="pi-llm-wiki 데모" width="1920" />
+</div>
+
 ---
 
 ## 빠른 시작
@@ -82,7 +102,9 @@ The extension will proactively suggest creating a wiki on your first session. Al
 | 🧠 **Layered recall** | Searches both personal (`~/.llm-wiki/`) and project (`.llm-wiki/`) vaults — personal knowledge follows you everywhere |
 | 📝 **Auto-bootstrap** | Extension suggests creating a wiki when none exists in the current directory |
 | 💾 **Lightweight capture** | `wiki_retro` — save atomic insights as a single markdown file; full 4-layer pipeline also available via `wiki_capture_source` |
-| 🌐 **MCP Server** | Use with Claude Code, Cursor, Windsurf via stdio MCP transport |
+| 🧭 **Agent working-memory** _(opt-in)_ | `wiki_capture_trajectory` records *how* a task was solved (tool-call trajectory) → distill into reusable `skill`/`case` pages → `wiki_recall_skill` surfaces them next time. Off by default; enable with `/wiki-trajectories on` |
+| 🌐 **OKF v0.2 네이티브** | 이식 가능한 Open Knowledge Format 문서, 레거시 vault dual-read 호환성, 결정론적 projection |
+| 🌐 **MCP 서버** | Claude Code, Cursor, Windsurf에서 stdio MCP transport를 통해 동일한 OKF 지원 Wiki 사용 |
 | 📝 **Obsidian-friendly** | Folder-qualified wikilinks, stable source-ID citations, compatible vault |
 | 🛡️ **Guardrails** | Blocks direct edits to raw sources and generated metadata |
 | 🔧 **Configurable PDF extraction** | MarkItDown timeout via `WIKI_MARKITDOWN_TIMEOUT_MS` env var |
@@ -106,6 +128,11 @@ The extension will proactively suggest creating a wiki on your first session. Al
 | `wiki_rebuild_meta` | Force a full metadata rebuild (registry, backlinks, index, log) |
 | `wiki_log_event` | Append a structured event to the wiki activity log |
 | `wiki_watch` | Print a `crontab` line for automatic wiki updates (daily / weekly / hourly) — does not install it |
+| `wiki_capture_trajectory` _(opt-in)_ | Capture the completed task's tool-call trajectory (agent working-memory) |
+| `wiki_distill_skills` _(opt-in)_ | Batch undistilled trajectories for synthesis into reusable skill pages |
+| `wiki_recall_skill` _(opt-in)_ | Recall distilled skills + similar past cases — "have I done this before?" |
+
+> The three agent-trajectory tools are **off by default** (issue #80). Enable them with `/wiki-trajectories on` (sets `llm-wiki.trajectories`); when off they are not registered at all.
 
 ### 슬래시 명령
 
@@ -120,6 +147,10 @@ The extension will proactively suggest creating a wiki on your first session. Al
 | `/wiki-status` | Show a concise operational summary |
 | `/wiki-digest [--period daily\|weekly]` | Generate a digest of recent activity |
 | `/wiki-retro` | Save atomic insights from completed tasks |
+| `/wiki-req <concept>` | Decompose a concept into atomic, traceable requirement pages |
+| `/wiki-trajectories <on\|off>` | Enable/disable agent working-memory (opt-in, off by default) |
+| `/wiki-record <title>` | Capture the completed task's trajectory (requires trajectories enabled) |
+| `/wiki-skills [query]` | Search distilled skills + past cases (requires trajectories enabled) |
 
 ---
 
@@ -357,7 +388,7 @@ The bundled `llm-wiki` skill teaches the model to:
 
 ### Vault 계층
 
-See the [Layered Vault Architecture](#layered-vault-architecture) section above for the personal/project/company layering.
+개인, 프로젝트, 회사 계층에 대해서는 위의 [계층형 Vault 아키텍처](#계층형-vault-아키텍처) 섹션을 참조하세요.
 
 ### 4계층 페이지 모델
 

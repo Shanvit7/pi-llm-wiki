@@ -16,24 +16,30 @@
 
 <br/>
 
+**Base de conocimiento autogestionable, compatible con Obsidian, para [pi](https://pi.dev).**
+Sigue el patrón LLM Wiki de Andrej Karpathy: [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
+Convierte fuentes sin procesar (URLs, PDFs, Markdown, JSON, XML) en un wiki duradero, interconectado y mantenido por LLM que se acumula con el tiempo.
+
+### Soporte nativo para Open Knowledge Format (OKF) v0.2
+
+Construye una base de conocimiento que puedes llevar contigo — no otra exportación cerrada y específica de una aplicación:
+
+- **Crea documentos portátiles OKF v0.2** con frontmatter canónico, enlaces Markdown estándar y citas de fuentes estables.
+- **Lee tanto páginas legacy como OKF** para que los vaults existentes sigan funcionando sin migración automática ni reescritura.
+- **Genera índices y registros deterministas** desde páginas autoritativas, manteniendo la navegación y los metadatos reproducibles.
+- **Usa el mismo modelo de conocimiento desde Pi o MCP** con Claude Code, Cursor, Windsurf y otros clientes MCP.
+- **Mantente compatible con Obsidian** mientras mantienes tu conocimiento listo para herramientas que soporten Open Knowledge Format.
+
+Comienza con un nuevo vault OKF, o apunta pi-llm-wiki a un vault existente y adopta el formato a tu ritmo. Consulta la [especificación OKF Foundation](docs/superpowers/specs/2026-08-02-okf-foundation-design.md) para detalles de implementación.
+
+---
+
+## Demo
+
 <div align="center">
-  <a href="https://github.com/zosmaai/pi-llm-wiki/stargazers">
-    <img src="./assets/thank-you-for-the-star.png" alt="Thank you for starring pi-llm-wiki!" width="100%" />
-  </a>
-  <br/>
-  <sub>
-    If you find pi-llm-wiki useful,
-    <a href="https://github.com/zosmaai/pi-llm-wiki">⭐ star the repo</a> —
-    it lets us know we're building something that matters.
-  </sub>
+  <img src="./assets/demo.gif" alt="pi-llm-wiki demo" width="1920" />
 </div>
-
-<br/>
-
-**Base de conocimiento autogestionable compatible con Obsidian para [pi](https://pi.dev). Sigue el patrón LLM Wiki de Andrej Karpathy.**
-Follows Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
-
-Convierte fuentes sin procesar (URLs, PDFs, markdown, JSON, XML) en un wiki duradero, interconectado y mantenido por LLM que se acumula con el tiempo.
 
 ---
 
@@ -43,7 +49,7 @@ Convierte fuentes sin procesar (URLs, PDFs, markdown, JSON, XML) en un wiki dura
 pi install npm:@zosmaai/pi-llm-wiki
 ```
 
-The extension will proactively suggest creating a wiki on your first session. Alternatively:
+La extensión sugerirá proactivamente crear un wiki en tu primera sesión. Alternativamente:
 
 ```
 /wiki-init "AI Engineering"
@@ -55,93 +61,104 @@ The extension will proactively suggest creating a wiki on your first session. Al
 
 ## ¿Por qué este paquete?
 
-La mayoría de los flujos de trabajo LLM basados en archivos se comportan como RAG de un solo uso: el modelo busca documentos en bruto cada vez que haces una pregunta. La síntesis es efímera.
+La mayoría de los flujos de trabajo basados en archivos con LLM se comportan como RAG de un solo tiro: el modelo busca documentos sin procesar cada vez que haces una pregunta. La síntesis es efímera.
 
 **pi-llm-wiki** crea una capa intermedia:
 
-- **Los paquetes de fuente sin procesar preservan las entradas originales**
-- **Las páginas de fuente resumen lo que cada fuente dice**
-- **Las páginas canónicas del wiki rastrean lo que el wiki cree actualmente**
-- **Los metadatos generados mantienen todo buscable y navegable**
+- **Paquetes de fuentes crudas** preservan las entradas de origen de verdad
+- **Páginas de fuentes** resumen lo que cada fuente dice
+- **Páginas canónicas del wiki** rastrean lo que el wiki actualmente cree
+- **Metadatos generados** mantienen todo buscable y navegable
 
-El resultado es un wiki que se acumula a medida que capturas fuentes, haces preguntas y archivas análisis duraderos.
+El resultado es un wiki que **se acumula** mientras capturas fuentes, haces preguntas y archivas análisis duraderos.
 
 ---
 
 ## Características
 
-| Capability | Description |
-|------------|-------------|
-| 🏠 **Personal fallback** | Always-on `~/.llm-wiki/` vault — knowledge compounds across projects even when no project wiki exists |
-| 🔗 **Immutable source capture** | URLs, local files (PDF/md/txt/html/XML/JSON), or pasted text → structured source packets |
-| 🧠 **Automated ingestion** | `wiki_ingest` batch-processes sources into concept, entity, synthesis & analysis pages |
-| 🔍 **Full-text search** | Generated registry with keyword lookup across all pages and sources |
-| 🩺 **Mechanical linting** | Orphans, broken links, duplicate aliases, coverage gaps, stale captures |
-| 📊 **Dashboard** | `wiki_status` — counts, source states, recent activity |
-| 🤖 **Auto-update watch** | `wiki_watch` — print a `crontab` line that runs the full cycle on a schedule |
-| 🧠 **Layered recall** | Searches both personal (`~/.llm-wiki/`) and project (`.llm-wiki/`) vaults — personal knowledge follows you everywhere |
-| 📝 **Auto-bootstrap** | Extension suggests creating a wiki when none exists in the current directory |
-| 💾 **Lightweight capture** | `wiki_retro` — save atomic insights as a single markdown file; full 4-layer pipeline also available via `wiki_capture_source` |
-| 🌐 **MCP Server** | Use with Claude Code, Cursor, Windsurf via stdio MCP transport |
-| 📝 **Obsidian-friendly** | Folder-qualified wikilinks, stable source-ID citations, compatible vault |
-| 🛡️ **Guardrails** | Blocks direct edits to raw sources and generated metadata |
-| 🔧 **Configurable PDF extraction** | MarkItDown timeout via `WIKI_MARKITDOWN_TIMEOUT_MS` env var |
-| 🧪 **38+ tests, CI, CodeQL** | TypeScript, Vitest, Biome, Codecov |
+| Capacidad | Descripción |
+|-----------|-------------|
+| 🏠 **Fallback personal** | Vault siempre activo en `~/.llm-wiki/` — el conocimiento se acumula entre proyectos incluso cuando no existe un wiki del proyecto |
+| 🔗 **Captura de fuentes inmutable** | URLs, archivos locales (PDF/md/txt/html/XML/JSON) o texto pegado → paquetes de fuentes estructurados |
+| 🧠 **Ingesta automatizada** | `wiki_ingest` procesa por lotes fuentes en páginas de conceptos, entidades, síntesis y análisis |
+| 🔍 **Búsqueda de texto completo** | Registro generado con búsqueda por palabras clave en todas las páginas y fuentes |
+| 🩺 **Linting mecánico** | Huérfanos, enlaces rotos, alias duplicados, lagunas de cobertura, capturas obsoletas |
+| 📊 **Panel de control** | `wiki_status` — conteos, estados de fuentes, actividad reciente |
+| 🤖 **Vigilancia de auto-actualización** | `wiki_watch` — imprime una línea `crontab` que ejecuta el ciclo completo según un horario |
+| 🧠 **Recuerdo en capas** | Busca tanto en vaults personales (`~/.llm-wiki/`) como del proyecto (`.llm-wiki/`) — el conocimiento personal te sigue a todas partes |
+| 📝 **Auto-inicialización** | La extensión sugiere crear un wiki cuando no existe ninguno en el directorio actual |
+| 💾 **Captura ligera** | `wiki_retro` — guarda ideas atómicas como un solo archivo Markdown; también disponible el pipeline completo de 4 capas vía `wiki_capture_source` |
+| 🧭 **Memoria de trabajo del agente** _(opcional)_ | `wiki_capture_trajectory` registra *cómo* se resolvió una tarea (trayectoria de llamadas de herramientas) → destila en páginas reutilizables de `skill`/`case` → `wiki_recall_skill` las muestra la próxima vez. Desactivado por defecto; activa con `/wiki-trajectories on` |
+| 🌐 **OKF v0.2 nativo** | Documentos portátiles Open Knowledge Format, compatibilidad dual de lectura legacy, proyecciones deterministas |
+| 🌐 **Servidor MCP** | Usa el mismo wiki consciente de OKF desde Claude Code, Cursor, Windsurf vía transporte MCP por stdio |
+| 📝 **Amigable con Obsidian** | Wikilinks calificados por carpeta, citas estables de ID de fuente, vault compatible |
+| 🛡️ **Barreras de seguridad** | Bloquea ediciones directas a fuentes crudas y metadatos generados |
+| 🔧 **Extracción de PDF configurable** | Timeout de MarkItDown vía variable de entorno `WIKI_MARKITDOWN_TIMEOUT_MS` |
+| 🧪 **38+ pruebas, CI, CodeQL** | TypeScript, Vitest, Biome, Codecov |
 
 ---
 
 ## Herramientas
 
-| Tool | Description |
-|------|-------------|
-| `wiki_bootstrap` | Initialize a new wiki vault with config, templates, schema, and metadata |
-| `wiki_capture_source` | Capture a URL, local file, or pasted text into an immutable source packet |
-| `wiki_recall` | Search wiki for task-relevant pages — searches both personal (`~/.llm-wiki/`) and project (`.llm-wiki/`) vaults, deduplicated |
-| `wiki_retro` | Save atomic insights from completed tasks into the wiki |
-| `wiki_ingest` | Process uningested source packets into wiki pages (batch) |
-| `wiki_ensure_page` | Resolve or safely create entity / concept / synthesis / analysis pages |
-| `wiki_search` | Search the generated wiki registry |
-| `wiki_lint` | Deterministic health checks (orphans, gaps, contradictions, auto-fix) |
-| `wiki_status` | Show counts, source states, and recent activity |
-| `wiki_rebuild_meta` | Force a full metadata rebuild (registry, backlinks, index, log) |
-| `wiki_log_event` | Append a structured event to the wiki activity log |
-| `wiki_watch` | Print a `crontab` line for automatic wiki updates (daily / weekly / hourly) — does not install it |
+| Herramienta | Descripción |
+|-------------|-------------|
+| `wiki_bootstrap` | Inicializa un nuevo vault de wiki con configuración, plantillas, esquema y metadatos |
+| `wiki_capture_source` | Captura una URL, archivo local o texto pegado en un paquete de fuente inmutable |
+| `wiki_recall` | Busca en el wiki páginas relevantes para la tarea — busca en vaults personales y del proyecto, deduplicadas |
+| `wiki_retro` | Guarda ideas atómicas de tareas completadas en el wiki |
+| `wiki_ingest` | Procesa paquetes de fuentes no ingeridos en páginas del wiki (por lotes) |
+| `wiki_ensure_page` | Resuelve o crea de forma segura páginas de entidad / concepto / síntesis / análisis |
+| `wiki_search` | Busca en el registro generado del wiki |
+| `wiki_lint` | Comprobaciones de salud deterministas (huérfanos, lagunas, contradicciones, auto-reparación) |
+| `wiki_status` | Muestra conteos, estados de fuentes y actividad reciente |
+| `wiki_rebuild_meta` | Fuerza una reconstrucción completa de metadatos (registro, backlinks, índice, registro) |
+| `wiki_log_event` | Adjunta un evento estructurado al registro de actividad del wiki |
+| `wiki_watch` | Imprime una línea `crontab` para actualizaciones automáticas del wiki (diaria / semanal / horaria) — no la instala |
+| `wiki_capture_trajectory` _(opcional)_ | Captura la trayectoria de llamadas de herramientas de la tarea completada (memoria de trabajo del agente) |
+| `wiki_distill_skills` _(opcional)_ | Procesa por lotes trayectorias no destiladas para síntesis en páginas de habilidades reutilizables |
+| `wiki_recall_skill` _(opcional)_ | Recuerda habilidades destiladas + casos similares pasados — "¿he hecho esto antes?" |
+
+> Las tres herramientas de trayectoria del agente están **desactivadas por defecto** (issue #80). Actívalas con `/wiki-trajectories on` (establece `llm-wiki.trajectories`); cuando están apagadas no se registran en absoluto.
 
 ### Comandos de Barra
 
-| Command | Description |
+| Comando | Descripción |
 |---------|-------------|
-| `/wiki-init <topic>` | Initialize a new LLM Wiki vault |
-| `/wiki-ingest [path]` | Process new source files and update the wiki |
-| `/wiki-query <question>` | Ask questions against the wiki with citations |
-| `/wiki-discover [--topic <topic>]` | Auto-discover new sources from the web |
-| `/wiki-run [--schedule daily\|weekly]` | Full cycle: discover → ingest → lint |
-| `/wiki-lint [--fix]` | Health check (orphans, contradictions, gaps) |
-| `/wiki-status` | Show a concise operational summary |
-| `/wiki-digest [--period daily\|weekly]` | Generate a digest of recent activity |
-| `/wiki-retro` | Save atomic insights from completed tasks |
+| `/wiki-init <topic>` | Inicializa un nuevo vault LLM Wiki |
+| `/wiki-ingest [path]` | Procesa nuevos archivos de fuente y actualiza el wiki |
+| `/wiki-query <question>` | Haz preguntas al wiki con citas |
+| `/wiki-discover [--topic <topic>]` | Descubre automáticamente nuevas fuentes de la web |
+| `/wiki-run [--schedule daily\|weekly]` | Ciclo completo: descubrir → ingerir → lint |
+| `/wiki-lint [--fix]` | Comprobación de salud (huérfanos, contradicciones, lagunas) |
+| `/wiki-status` | Muestra un resumen operativo conciso |
+| `/wiki-digest [--period daily\|weekly]` | Genera un resumen de actividad reciente |
+| `/wiki-retro` | Guarda ideas atómicas de tareas completadas |
+| `/wiki-req <concept>` | Descompone un concepto en páginas de requisitos atómicas y rastreables |
+| `/wiki-trajectories <on\|off>` | Activa/desactiva la memoria de trabajo del agente (opcional, desactivada por defecto) |
+| `/wiki-record <title>` | Captura la trayectoria de la tarea completada (requiere trayectorias activadas) |
+| `/wiki-skills [query]` | Busca habilidades destiladas + casos pasados (requiere trayectorias activadas) |
 
 ---
 
 ## Arquitectura de Vault en Capas
 
-Knowledge follows you everywhere. pi-llm-wiki uses a layered vault system:
+El conocimiento te sigue a todas partes. pi-llm-wiki usa un sistema de vault en capas:
 
-| Layer | Location | Purpose |
-|-------|----------|---------|
-| 🏠 **Personal** | `~/.llm-wiki/` | Always active. Zero setup. Knowledge compounds across all your sessions — regardless of which project you're in. |
-| 📁 **Project** | `{project}/.llm-wiki/` | Explicit opt-in. Dedicated wiki per project, sharing personal knowledge when relevant. |
-| 🏢 **Company** (future) | git-tracked | Shared wiki across a team. `wiki_publish` promotes personal/project pages to the company wiki. |
+| Capa | Ubicación | Propósito |
+|------|-----------|-----------|
+| 🏠 **Personal** | `~/.llm-wiki/` | Siempre activo. Configuración cero. El conocimiento se acumula en todas tus sesiones — independientemente del proyecto en el que estés. |
+| 📁 **Proyecto** | `{project}/.llm-wiki/` | Opt-in explícito. Wiki dedicado por proyecto, compartiendo conocimiento personal cuando es relevante. |
+| 🏢 **Empresa** (futuro) | rastreado por git | Wiki compartido entre un equipo. `wiki_publish` promueve páginas personales/de proyecto al wiki de la empresa. |
 
 **Cómo funciona:**
 
-1. `resolveVaultRoot()` checks: cwd → walk up for `.llm-wiki/` → `~/.llm-wiki/`
-2. `wiki_recall` (layered) searches **both** personal and project vaults, merging results with vault labels
-3. Personal results are shown first in recall output, tagged as "📓 personal"
-4. `wiki_retro` writes to whichever vault is active (project takes priority)
-5. Set `WIKI_HOME` env var to override the personal wiki location
+1. `resolveVaultRoot()` verifica: cwd → subir buscando `.llm-wiki/` → `~/.llm-wiki/`
+2. `wiki_recall` (en capas) busca en **ambos** vaults personal y del proyecto, fusionando resultados con etiquetas de vault
+3. Los resultados personales se muestran primero en la salida de recall, etiquetados como "📓 personal"
+4. `wiki_retro` escribe en el vault que esté activo (el proyecto tiene prioridad)
+5. Establece la variable de entorno `WIKI_HOME` para sobrescribir la ubicación del wiki personal
 
-This means: you can have a project wiki for team documentation **and** a personal wiki for your own notes, and recall searches both simultaneously.
+Esto significa: puedes tener un wiki del proyecto para documentación del equipo **y** un wiki personal para tus propias notas, y recall busca ambos simultáneamente.
 
 ---
 
@@ -155,13 +172,13 @@ cd my-wiki
 pi
 ```
 
-Pregúntale a pi:
+Pregunta a pi:
 
 ```
 Initialize an llm wiki here for AI research.
 ```
 
-This calls `wiki_bootstrap` and creates:
+Esto llama a `wiki_bootstrap` y crea:
 
 ```
 .llm-wiki/
@@ -189,13 +206,13 @@ Capture these notes into the wiki: ...pasted text...
 
 ### 3) Integrar la fuente
 
-1. Capture the source
-2. Read `.llm-wiki/wiki/sources/SRC-*.md`
-3. Update that source page
-4. Search for impacted canonical pages with `wiki_search`
-5. Create missing pages with `wiki_ensure_page`
-6. Update concept / entity / synthesis pages with citations
-7. Mark the integration with `wiki_log_event kind=integrate`
+1. Captura la fuente
+2. Lee `.llm-wiki/wiki/sources/SRC-*.md`
+3. Actualiza esa página de fuente
+4. Busca páginas canónicas afectadas con `wiki_search`
+5. Crea páginas faltantes con `wiki_ensure_page`
+6. Actualiza páginas de concepto / entidad / síntesis con citas
+7. Marca la integración con `wiki_log_event kind=integrate`
 
 ### 4) Consultar el wiki
 
@@ -203,7 +220,7 @@ Capture these notes into the wiki: ...pasted text...
 Based on the wiki, what are the main tradeoffs between long-context models and RAG?
 ```
 
-By default, query mode is **read-only**. To file a durable answer:
+Por defecto, el modo de consulta es **de solo lectura**. Para archivar una respuesta duradera:
 
 ```
 Answer the question and file the result as an analysis page.
@@ -211,51 +228,49 @@ Answer the question and file the result as an analysis page.
 
 ---
 
-## Diseño del Vault
+## Estructura del Vault
 
 ```
 my-wiki/
 └─ .llm-wiki/
-   ├─ config.json               # Vault config
-   ├─ templates/                 # Page templates
+   ├─ config.json               # Configuración del vault
+   ├─ templates/                 # Plantillas de páginas
    ├─ raw/
    │  └─ sources/
    │     └─ SRC-2026-05-11-001/
    │        ├─ manifest.json
-   │        ├─ original/           # Original artifact
-   │        ├─ extracted.md        # Normalized text
+   │        ├─ original/           # Artefacto original
+   │        ├─ extracted.md        # Texto normalizado
    │        └─ attachments/
    ├─ wiki/
-   │  ├─ sources/                  # Source pages (what each source says)
-   │  ├─ concepts/                 # Concepts and recurring ideas
-   │  ├─ entities/                 # People, orgs, products, papers, systems
-   │  ├─ syntheses/                # Cross-source theses and tensions
-   │  └─ analyses/                 # Durable filed answers from queries
+   │  ├─ sources/                  # Páginas de fuentes (lo que dice cada fuente)
+   │  ├─ concepts/                 # Conceptos e ideas recurrentes
+   │  ├─ entities/                 # Personas, organizaciones, productos, papers, sistemas
+   │  ├─ syntheses/                # Teses y tensiones entre fuentes
+   │  └─ analyses/                 # Respuestas archivadas duraderas de consultas
    ├─ meta/
-   │  ├─ registry.json             # Auto-generated search index
+   │  ├─ registry.json             # Índice de búsqueda auto-generado
    │  ├─ backlinks.json
    │  ├─ index.md
-   │  ├─ events.jsonl              # Append-only event log
+   │  ├─ events.jsonl              # Registro de eventos de solo adjunción
    │  ├─ log.md
    │  └─ lint-report.md
-   └─ WIKI_SCHEMA.md               # Operating manual
+   └─ WIKI_SCHEMA.md               # Manual de operaciones
 ```
 
 ### Modelo de Propiedad
 
-| Path | Owner | Rule |
-|------|-------|------|
-| Path | Owner | Rule |
-|------|-------|------|
-| `.llm-wiki/raw/**` | Extension tools | Immutable after capture |
-| `.llm-wiki/wiki/**` | Model + user | Editable knowledge pages |
-| `.llm-wiki/meta/registry.json` | Extension | Generated |
-| `.llm-wiki/meta/backlinks.json` | Extension | Generated |
-| `.llm-wiki/meta/index.md` | Extension | Generated |
-| `.llm-wiki/meta/events.jsonl` | Extension / tool | Append-only |
-| `.llm-wiki/meta/log.md` | Extension | Generated from events |
-| `.llm-wiki/meta/lint-report.md` | Extension | Generated |
-| `.llm-wiki/WIKI_SCHEMA.md` | Human + explicit request | Operating manual |
+| Ruta | Propietario | Regla |
+|------|-------------|-------|
+| `.llm-wiki/raw/**` | Herramientas de extensión | Inmutable tras la captura |
+| `.llm-wiki/wiki/**` | Modelo + usuario | Páginas de conocimiento editables |
+| `.llm-wiki/meta/registry.json` | Extensión | Generado |
+| `.llm-wiki/meta/backlinks.json` | Extensión | Generado |
+| `.llm-wiki/meta/index.md` | Extensión | Generado |
+| `.llm-wiki/meta/events.jsonl` | Extensión / herramienta | Solo adjunción |
+| `.llm-wiki/meta/log.md` | Extensión | Generado desde eventos |
+| `.llm-wiki/meta/lint-report.md` | Extensión | Generado |
+| `.llm-wiki/WIKI_SCHEMA.md` | Humano + solicitud explícita | Manual de operaciones |
 
 ---
 
@@ -269,21 +284,21 @@ my-wiki/
 [[syntheses/long-context-vs-rag]]
 ```
 
-### Citas de Hechos
+### Citas Factuales
 
 ```markdown
 [[sources/SRC-2026-04-04-001|SRC-2026-04-04-001]]
 ```
 
-Stable source-page IDs keep provenance stable even if titles change.
+Los IDs estables de páginas de fuente mantienen la procedencia estable incluso si los títulos cambian.
 
 ---
 
-## Guardarraíles
+## Barreras de Seguridad
 
-The extension **blocks** direct tool-call edits to:
+La extensión **bloquea** ediciones directas por llamada de herramienta a:
 
-- `.llm-wiki/raw/**` — immutable source artifacts
+- `.llm-wiki/raw/**` — artefactos de fuente inmutables
 - `.llm-wiki/meta/registry.json`
 - `.llm-wiki/meta/backlinks.json`
 - `.llm-wiki/meta/events.jsonl`
@@ -291,116 +306,191 @@ The extension **blocks** direct tool-call edits to:
 - `.llm-wiki/meta/log.md`
 - `.llm-wiki/meta/lint-report.md`
 
-If the model directly edits `.llm-wiki/wiki/**` using Pi's built-in `write` or `edit` tools, the extension **automatically rebuilds** generated metadata at the end of the agent turn.
+Si el modelo edita directamente `.llm-wiki/wiki/**` usando las herramientas integradas `write` o `edit` de Pi, la extensión **reconstruye automáticamente** los metadatos generados al final del turno del agente.
 
 ---
 
 ## Formato de Paquete de Fuente
 
-Each captured source is stored as a structured packet:
+Cada fuente capturada se almacena como un paquete estructurado:
 
 ```
 .llm-wiki/raw/sources/SRC-YYYY-MM-DD-NNN/
-├─ manifest.json     # Capture metadata (title, URL, format, timestamp)
-├─ original/         # Original artifact (preserved as-is)
-├─ extracted.md      # Normalized text (PDF→md, XML→md, JSON→md, etc.)
-└─ attachments/      # Future attachment downloads
+├─ manifest.json     # Metadatos de captura (título, URL, formato, marca de tiempo)
+├─ original/         # Artefacto original (preservado tal cual)
+├─ extracted.md      # Texto normalizado (PDF→md, XML→md, JSON→md, etc.)
+└─ attachments/      # Descargas futuras de adjuntos
 ```
 
-This preserves both the **original artifact** and a **normalized extracted view** for reading.
+Esto preserva tanto el **artefacto original** como una **vista extraída normalizada** para lectura.
 
 ---
 
 ## Servidor MCP
 
-Use the wiki from **any MCP-compatible tool** — Claude Code, Cursor, Windsurf, and others.
+Usa el wiki desde **cualquier herramienta compatible con MCP** — Claude Code, Cursor, Windsurf y otras.
 
-The package ships a standalone MCP server exposing 5 wiki tools over stdio:
+El paquete incluye un servidor MCP independiente que expone 5 herramientas de wiki por stdio:
 
-| Tool | Description |
-|------|-------------|
-| `wiki_recall` | Search wiki for task-relevant pages |
-| `wiki_search` | Full registry search |
-| `wiki_status` | Wiki stats (page counts, type breakdown) |
-| `wiki_retro` | Save atomic insights |
-| `wiki_capture_source` | Capture text as a source packet |
+| Herramienta | Descripción |
+|-------------|-------------|
+| `wiki_recall` | Busca en el wiki páginas relevantes para la tarea |
+| `wiki_search` | Búsqueda completa del registro |
+| `wiki_status` | Estadísticas del wiki (conteos de páginas, desglose por tipo) |
+| `wiki_retro` | Guarda ideas atómicas |
+| `wiki_capture_source` | Captura texto como paquete de fuente |
 
 ### Uso
 
 ```bash
-# Auto-discovered by pi:
+# Auto-descubierto por pi:
 pi install npm:@zosmaai/pi-llm-wiki
 
-# Standalone with any MCP client:
+# Independiente con cualquier cliente MCP:
 WIKI_ROOT=~/my-wiki node node_modules/@zosmaai/pi-llm-wiki/mcp/index.js
 ```
 
-Set `WIKI_ROOT` to your wiki vault directory. If unset, the server auto-detects from the current working directory.
+Establece `WIKI_ROOT` en el directorio de tu vault de wiki. Si no está establecido, el servidor lo detecta automáticamente desde el directorio de trabajo actual.
 
 ---
 
-## Comportamiento de la Skill
+## Comportamiento de la Habilidad
 
-The bundled `llm-wiki` skill teaches the model to:
+La habilidad `llm-wiki` incluida enseña al modelo a:
 
-- ❌ Never edit raw sources directly
-- ❌ Never edit generated metadata files
-- ✅ Capture first, integrate second
-- ✅ Search before creating new canonical pages
-- ✅ Cite facts using source-page IDs
-- ✅ Keep query mode read-only by default
-- ✅ Use "Tensions / caveats" and "Open questions" when evidence is mixed
+- ❌ Nunca editar fuentes crudas directamente
+- ❌ Nunca editar archivos de metadatos generados
+- ✅ Capturar primero, integrar después
+- ✅ Buscar antes de crear nuevas páginas canónicas
+- ✅ Citar hechos usando IDs de páginas de fuente
+- ✅ Mantener el modo de consulta de solo lectura por defecto
+- ✅ Usar "Tensiones / advertencias" y "Preguntas abiertas" cuando la evidencia es mixta
 
 ---
 
 ## Arquitectura
 
-### Capas de Vault
+### Capas del Vault
 
-See the [Layered Vault Architecture](#layered-vault-architecture) section above for the personal/project/company layering.
+Consulta la sección [Arquitectura de Vault en Capas](#arquitectura-de-vault-en-capas) anterior para el apilamiento personal/proyecto/empresa.
 
-### Modelo de Página de Cuatro Capas
+### Modelo de Páginas de Cuatro Capas
 
-Each wiki vault has four layers with clear ownership:
+Cada vault de wiki tiene cuatro capas con propiedad clara:
 
 ```
-.llm-wiki/raw/sources/SRC-*/     # Immutable source packets (extension-owned)
-.llm-wiki/wiki/                   # Editable knowledge pages (you + LLM)
-.llm-wiki/meta/                   # Auto-generated registry, backlinks, index, log
-.llm-wiki/                        # Config and templates
+.llm-wiki/raw/sources/SRC-*/     # Paquetes de fuente inmutables (propiedad de la extensión)
+.llm-wiki/wiki/                   # Páginas de conocimiento editables (tú + LLM)
+.llm-wiki/meta/                   # Registro, backlinks, índice, registro auto-generados
+.llm-wiki/                        # Configuración y plantillas
 ```
 
-Read [docs/architecture.md](docs/architecture.md) for the full design document.
+Lee [docs/architecture.md](docs/architecture.md) para el documento de diseño completo.
 
 ---
 
 ## Documentación
 
-| Document | What it covers |
-|----------|---------------|
-| [Architecture](docs/architecture.md) | How the four layers work, ownership model |
-| [Commands](docs/commands.md) | All slash commands and tool reference |
-| [Obsidian Integration](docs/obsidian.md) | Vault setup and recommended plugins |
-| [Configuration](docs/configuration.md) | Wiki modes, topics, environment variables |
-| [API](docs/api.md) | Extension tool parameter reference |
+| Documento | Qué cubre |
+|-----------|-----------|
+| [Arquitectura](docs/architecture.md) | Cómo funcionan las cuatro capas, modelo de propiedad |
+| [Comandos](docs/commands.md) | Todos los comandos de barra y referencia de herramientas |
+| [Integración con Obsidian](docs/obsidian.md) | Configuración del vault y plugins recomendados |
+| [Configuración](docs/configuration.md) | Modos de wiki, temas, variables de entorno |
+| [API](docs/api.md) | Referencia de parámetros de herramientas de extensión |
 
 ---
 
 ## Contribuir
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, test patterns, and PR workflow.
+Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para la configuración de desarrollo, patrones de prueba y flujo de trabajo de PR.
 
 ---
 
-## Historial de Estrellas
+<div align="center">
+  <a href="https://github.com/zosmaai/pi-llm-wiki/stargazers">
+    <img src="./assets/thank-you-for-the-star.png" alt="Thank you for starring pi-llm-wiki!" width="100%" />
+  </a>
+  <br/>
+  <sub>
+    If you find pi-llm-wiki useful,
+    <a href="https://github.com/zosmaai/pi-llm-wiki">⭐ star the repo</a> —
+    it lets us know we're building something that matters.
+  </sub>
+</div>
 
-[![Star History Chart](https://api.star-history.com/svg?repos=zosmaai/pi-llm-wiki&type=Date)](https://star-history.com/#zosmaai/pi-llm-wiki&Date)
+<br/>
 
-## Contribuidores
+## Contribuyentes
 
-<a href="https://github.com/zosmaai/pi-llm-wiki/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=zosmaai/pi-llm-wiki" alt="Contributors" />
-</a>
+¡Gracias a todos los que han contribuido! Esta lista se regenera automáticamente por [`.github/workflows/contributors.yml`](.github/workflows/contributors.yml) — consulta [#60](https://github.com/zosmaai/pi-llm-wiki/issues/60) para la justificación.
+
+<!-- readme: contributors -start -->
+<table>
+	<tbody>
+		<tr>
+            <td align="center">
+                <a href="https://github.com/arjun-zosma">
+                    <img src="https://avatars.githubusercontent.com/u/25246034?v=4" width="64;" alt="arjun-zosma"/>
+                    <br />
+                    <sub><b>Arjun Nayak</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/Shanvit7">
+                    <img src="https://avatars.githubusercontent.com/u/64424817?v=4" width="64;" alt="Shanvit7"/>
+                    <br />
+                    <sub><b>Shanvit S Shetty</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/jfraser">
+                    <img src="https://avatars.githubusercontent.com/u/165964?v=4" width="64;" alt="jfraser"/>
+                    <br />
+                    <sub><b>James Fraser</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/CelestialCreator">
+                    <img src="https://avatars.githubusercontent.com/u/177931942?v=4" width="64;" alt="CelestialCreator"/>
+                    <br />
+                    <sub><b>Akshay</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/xcsf">
+                    <img src="https://avatars.githubusercontent.com/u/43439835?v=4" width="64;" alt="xcsf"/>
+                    <br />
+                    <sub><b>xcsf</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/danielnaab">
+                    <img src="https://avatars.githubusercontent.com/u/136512?v=4" width="64;" alt="danielnaab"/>
+                    <br />
+                    <sub><b>Daniel Naab</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/deestax">
+                    <img src="https://avatars.githubusercontent.com/u/152369481?v=4" width="64;" alt="deestax"/>
+                    <br />
+                    <sub><b>Superdao</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/mystery4f">
+                    <img src="https://avatars.githubusercontent.com/u/40482524?v=4" width="64;" alt="mystery4f"/>
+                    <br />
+                    <sub><b>标准萌新</b></sub>
+                </a>
+            </td>
+		</tr>
+	<tbody>
+</table>
+<!-- readme: contributors -end -->
+
+<sub>Full history: [contributors graph](https://github.com/zosmaai/pi-llm-wiki/graphs/contributors).</sub>
 
 ---
 
@@ -409,6 +499,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, test patterns, and
   <a href="https://pi.dev">pi.dev</a> · <a href="https://github.com/zosmaai/pi-llm-wiki/issues">Issues</a>
 </div>
 
-## Licencia
+## License
 
 MIT

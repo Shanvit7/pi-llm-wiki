@@ -35,6 +35,26 @@ Follows Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/44
 
 कच्चे स्रोतों (URL, PDF, मार्कडाउन, JSON, XML) को एक टिकाऊ, आपस में जुड़े, LLM-अनुरक्षित Wiki में बदलें जो समय के साथ संचित होता रहे।
 
+### मूल Open Knowledge Format (OKF) v0.2 समर्थन
+
+ऐसा ज्ञानकोष बनाएँ जिसे आप आगे ले जा सकें — कोई और बंद, ऐप-विशिष्ट निर्यात नहीं:
+
+- **पोर्टेबल OKF v0.2 दस्तावेज़ बनाएँ** जिनमें मानक frontmatter, मानक Markdown लिंक और स्थिर स्रोत उद्धरण हों।
+- **पुराने और OKF दोनों पृष्ठ पढ़ें**, ताकि मौजूदा vault बिना स्वचालित migration या पुनर्लेखन के काम करते रहें।
+- **प्रामाणिक पृष्ठों से नियतात्मक index और log बनाएँ**, जिससे navigation और metadata पुनरुत्पाद्य रहें।
+- **Pi या MCP से एक ही ज्ञान मॉडल उपयोग करें** — Claude Code, Cursor, Windsurf और अन्य MCP clients के साथ।
+- **Obsidian-संगत रहें** और अपने ज्ञान को Open Knowledge Format समर्थित tools के लिए तैयार रखें।
+
+नए OKF vault से शुरू करें, या pi-llm-wiki को मौजूदा vault पर उपयोग करके अपनी शर्तों पर format अपनाएँ। कार्यान्वयन विवरण के लिए [OKF Foundation specification](docs/superpowers/specs/2026-08-02-okf-foundation-design.md) देखें।
+
+---
+
+## डेमो
+
+<div align="center">
+  <img src="./assets/demo.gif" alt="pi-llm-wiki डेमो" width="1920" />
+</div>
+
 ---
 
 ## त्वरित शुरुआत
@@ -82,7 +102,9 @@ The extension will proactively suggest creating a wiki on your first session. Al
 | 🧠 **Layered recall** | Searches both personal (`~/.llm-wiki/`) and project (`.llm-wiki/`) vaults — personal knowledge follows you everywhere |
 | 📝 **Auto-bootstrap** | Extension suggests creating a wiki when none exists in the current directory |
 | 💾 **Lightweight capture** | `wiki_retro` — save atomic insights as a single markdown file; full 4-layer pipeline also available via `wiki_capture_source` |
-| 🌐 **MCP Server** | Use with Claude Code, Cursor, Windsurf via stdio MCP transport |
+| 🧭 **Agent working-memory** _(opt-in)_ | `wiki_capture_trajectory` records *how* a task was solved (tool-call trajectory) → distill into reusable `skill`/`case` pages → `wiki_recall_skill` surfaces them next time. Off by default; enable with `/wiki-trajectories on` |
+| 🌐 **मूल OKF v0.2** | पोर्टेबल Open Knowledge Format दस्तावेज़, पुराने vault के लिए dual-read संगतता और नियतात्मक projections |
+| 🌐 **MCP Server** | Claude Code, Cursor और Windsurf से stdio MCP transport द्वारा उसी OKF-सक्षम wiki का उपयोग करें |
 | 📝 **Obsidian-friendly** | Folder-qualified wikilinks, stable source-ID citations, compatible vault |
 | 🛡️ **Guardrails** | Blocks direct edits to raw sources and generated metadata |
 | 🔧 **Configurable PDF extraction** | MarkItDown timeout via `WIKI_MARKITDOWN_TIMEOUT_MS` env var |
@@ -106,6 +128,11 @@ The extension will proactively suggest creating a wiki on your first session. Al
 | `wiki_rebuild_meta` | Force a full metadata rebuild (registry, backlinks, index, log) |
 | `wiki_log_event` | Append a structured event to the wiki activity log |
 | `wiki_watch` | Print a `crontab` line for automatic wiki updates (daily / weekly / hourly) — does not install it |
+| `wiki_capture_trajectory` _(opt-in)_ | Capture the completed task's tool-call trajectory (agent working-memory) |
+| `wiki_distill_skills` _(opt-in)_ | Batch undistilled trajectories for synthesis into reusable skill pages |
+| `wiki_recall_skill` _(opt-in)_ | Recall distilled skills + similar past cases — "have I done this before?" |
+
+> The three agent-trajectory tools are **off by default** (issue #80). Enable them with `/wiki-trajectories on` (sets `llm-wiki.trajectories`); when off they are not registered at all.
 
 ### स्लैश कमांड
 
@@ -120,6 +147,10 @@ The extension will proactively suggest creating a wiki on your first session. Al
 | `/wiki-status` | Show a concise operational summary |
 | `/wiki-digest [--period daily\|weekly]` | Generate a digest of recent activity |
 | `/wiki-retro` | Save atomic insights from completed tasks |
+| `/wiki-req <concept>` | Decompose a concept into atomic, traceable requirement pages |
+| `/wiki-trajectories <on\|off>` | Enable/disable agent working-memory (opt-in, off by default) |
+| `/wiki-record <title>` | Capture the completed task's trajectory (requires trajectories enabled) |
+| `/wiki-skills [query]` | Search distilled skills + past cases (requires trajectories enabled) |
 
 ---
 
@@ -357,7 +388,7 @@ The bundled `llm-wiki` skill teaches the model to:
 
 ### Vault स्तर
 
-See the [Layered Vault Architecture](#layered-vault-architecture) section above for the personal/project/company layering.
+व्यक्तिगत, project और company layering के लिए ऊपर दिया गया [स्तरित Vault आर्किटेक्चर](#स्तरित-vault-आर्किटेक्चर) अनुभाग देखें।
 
 ### चार-स्तरीय पृष्ठ मॉडल
 

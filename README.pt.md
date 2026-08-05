@@ -35,6 +35,26 @@ Follows Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/44
 
 Transforme fontes brutas (URLs, PDFs, markdown, JSON, XML) em um wiki durável, interligado e mantido por LLM que se acumula ao longo do tempo.
 
+### Suporte nativo ao Open Knowledge Format (OKF) v0.2
+
+Crie uma base de conhecimento que você possa levar adiante — não mais uma exportação fechada e específica de aplicativo:
+
+- **Crie documentos OKF v0.2 portáteis** com frontmatter canônico, links Markdown padrão e citações de fonte estáveis.
+- **Leia páginas legadas e OKF** para que vaults existentes continuem funcionando sem migração ou reescrita automática.
+- **Gere índices e logs determinísticos** a partir de páginas autoritativas, mantendo a navegação e os metadados reproduzíveis.
+- **Use o mesmo modelo de conhecimento no Pi ou via MCP** com Claude Code, Cursor, Windsurf e outros clientes MCP.
+- **Mantenha a compatibilidade com Obsidian** e deixe seu conhecimento pronto para ferramentas que suportam Open Knowledge Format.
+
+Comece com um novo vault OKF ou aponte o pi-llm-wiki para um vault existente e adote o formato no seu ritmo. Consulte a [especificação OKF Foundation](docs/superpowers/specs/2026-08-02-okf-foundation-design.md) para detalhes de implementação.
+
+---
+
+## Demonstração
+
+<div align="center">
+  <img src="./assets/demo.gif" alt="Demonstração do pi-llm-wiki" width="1920" />
+</div>
+
 ---
 
 ## Início Rápido
@@ -82,7 +102,9 @@ O resultado é um wiki que se acumula conforme você captura fontes, faz pergunt
 | 🧠 **Layered recall** | Searches both personal (`~/.llm-wiki/`) and project (`.llm-wiki/`) vaults — personal knowledge follows you everywhere |
 | 📝 **Auto-bootstrap** | Extension suggests creating a wiki when none exists in the current directory |
 | 💾 **Lightweight capture** | `wiki_retro` — save atomic insights as a single markdown file; full 4-layer pipeline also available via `wiki_capture_source` |
-| 🌐 **MCP Server** | Use with Claude Code, Cursor, Windsurf via stdio MCP transport |
+| 🧭 **Agent working-memory** _(opt-in)_ | `wiki_capture_trajectory` records *how* a task was solved (tool-call trajectory) → distill into reusable `skill`/`case` pages → `wiki_recall_skill` surfaces them next time. Off by default; enable with `/wiki-trajectories on` |
+| 🌐 **OKF v0.2 nativo** | Documentos Open Knowledge Format portáteis, compatibilidade dual-read com vaults legados e projeções determinísticas |
+| 🌐 **Servidor MCP** | Use o mesmo wiki compatível com OKF no Claude Code, Cursor e Windsurf via transporte MCP stdio |
 | 📝 **Obsidian-friendly** | Folder-qualified wikilinks, stable source-ID citations, compatible vault |
 | 🛡️ **Guardrails** | Blocks direct edits to raw sources and generated metadata |
 | 🔧 **Configurable PDF extraction** | MarkItDown timeout via `WIKI_MARKITDOWN_TIMEOUT_MS` env var |
@@ -106,6 +128,11 @@ O resultado é um wiki que se acumula conforme você captura fontes, faz pergunt
 | `wiki_rebuild_meta` | Force a full metadata rebuild (registry, backlinks, index, log) |
 | `wiki_log_event` | Append a structured event to the wiki activity log |
 | `wiki_watch` | Print a `crontab` line for automatic wiki updates (daily / weekly / hourly) — does not install it |
+| `wiki_capture_trajectory` _(opt-in)_ | Capture the completed task's tool-call trajectory (agent working-memory) |
+| `wiki_distill_skills` _(opt-in)_ | Batch undistilled trajectories for synthesis into reusable skill pages |
+| `wiki_recall_skill` _(opt-in)_ | Recall distilled skills + similar past cases — "have I done this before?" |
+
+> The three agent-trajectory tools are **off by default** (issue #80). Enable them with `/wiki-trajectories on` (sets `llm-wiki.trajectories`); when off they are not registered at all.
 
 ### Comandos de Barra
 
@@ -120,6 +147,10 @@ O resultado é um wiki que se acumula conforme você captura fontes, faz pergunt
 | `/wiki-status` | Show a concise operational summary |
 | `/wiki-digest [--period daily\|weekly]` | Generate a digest of recent activity |
 | `/wiki-retro` | Save atomic insights from completed tasks |
+| `/wiki-req <concept>` | Decompose a concept into atomic, traceable requirement pages |
+| `/wiki-trajectories <on\|off>` | Enable/disable agent working-memory (opt-in, off by default) |
+| `/wiki-record <title>` | Capture the completed task's trajectory (requires trajectories enabled) |
+| `/wiki-skills [query]` | Search distilled skills + past cases (requires trajectories enabled) |
 
 ---
 
@@ -357,7 +388,7 @@ The bundled `llm-wiki` skill teaches the model to:
 
 ### Camadas de Vault
 
-See the [Layered Vault Architecture](#layered-vault-architecture) section above for the personal/project/company layering.
+Consulte a seção [Arquitetura de Vault em Camadas](#arquitetura-de-vault-em-camadas) acima para as camadas pessoal, de projeto e empresarial.
 
 ### Modelo de Página de Quatro Camadas
 

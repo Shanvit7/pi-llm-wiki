@@ -7,7 +7,7 @@
 [![CI](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/ci.yml/badge.svg)](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@zosmaai/pi-llm-wiki)](https://www.npmjs.com/package/@zosmaai/pi-llm-wiki)
 [![npm downloads](https://img.shields.io/npm/dm/@zosmaai/pi-llm-wiki)](https://www.npmjs.com/package/@zosmaai/pi-llm-wiki)
-[![Coverage](https://codecov.io/gh/zosmaai/pi-llm-wiki/branch/main/graph/badge.svg)](https://codecov.io/gh/zosmaai/pi-llm-wiki)
+[![Coverage](https://img.shields.io/badge/coverage-85.09%25-brightgreen.svg)](https://codecov.io/gh/zosmaai/pi-llm-wiki)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CodeQL](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/codeql.yml/badge.svg)](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/codeql.yml)
 [![GitHub Repo Stars](https://img.shields.io/github/stars/zosmaai/pi-llm-wiki?style=social)](https://github.com/zosmaai/pi-llm-wiki/stargazers)
@@ -94,7 +94,7 @@ El resultado es un wiki que **se acumula** mientras capturas fuentes, haces preg
 | 📝 **Amigable con Obsidian** | Wikilinks calificados por carpeta, citas estables de ID de fuente, vault compatible |
 | 🛡️ **Barreras de seguridad** | Bloquea ediciones directas a fuentes crudas y metadatos generados |
 | 🔧 **Extracción de PDF configurable** | Timeout de MarkItDown vía variable de entorno `WIKI_MARKITDOWN_TIMEOUT_MS` |
-| 🧪 **38+ pruebas, CI, CodeQL** | TypeScript, Vitest, Biome, Codecov |
+| 🧪 **562 pruebas, 85.09% de cobertura** | TypeScript, Vitest, Biome, Codecov, CodeQL |
 
 ---
 

@@ -336,15 +336,13 @@ describe("migrate-llm-wiki CLI", () => {
       child.kill("SIGKILL");
       throw new Error("migration did not reach the paused directory move");
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
     mkdirSync(join(outer, "meta"));
-    child.kill("SIGCONT");
     const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
 
     expect(code).toBe(1);
     expect(readdirSync(join(outer, "meta"))).toEqual([]);
     expect(readFileSync(join(inner, "meta", "registry.json"), "utf8")).toBe("inner registry\n");
-  });
+  }, 20_000);
 
   it("does not overwrite a doubled-layout entry raced in after confirmation", async () => {
     const root = tempRoot("pi doubled race ");

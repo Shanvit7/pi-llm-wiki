@@ -291,11 +291,11 @@ function buildSourcePageSkeleton(manifest: Record<string, unknown>, extracted: s
 
 ## Entities Mentioned
 
-- [entity-name](/entities/entity-name.md)
+- [LLM: Add linked entities after review]
 
 ## Concepts Mentioned
 
-- [concept-name](/concepts/concept-name.md)
+- [LLM: Add linked concepts after review]
 
 ## Notable Quotes
 
@@ -304,8 +304,8 @@ function buildSourcePageSkeleton(manifest: Record<string, unknown>, extracted: s
 ## Source Packet
 
 - **ID:** \`sources/${id}\`
-- **Extracted:** [raw/sources/${id}/extracted.md](../raw/sources/${id}/extracted.md)
-- **Manifest:** [raw/sources/${id}/manifest.json](../raw/sources/${id}/manifest.json)
+- **Extracted:** \`raw/sources/${id}/extracted.md\`
+- **Manifest:** \`raw/sources/${id}/manifest.json\`
 `;
 
   const doc = createKnowledgeDocument(

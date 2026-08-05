@@ -7,6 +7,7 @@ import {
   commitSynthesis,
 } from "../extensions/llm-wiki/lib/ingest-worker.js";
 import { parseKnowledgeDocument } from "../extensions/llm-wiki/lib/knowledge-document.js";
+import { rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
 import { ensureVaultStructure, getVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
 
 const MANIFEST = {
@@ -94,6 +95,16 @@ describe("commitSynthesis", () => {
     expect(res.conceptsCreated.sort()).toEqual(["self-attention", "transformer"]);
     expect(existsSync(join(paths.wiki, "entities", "google-brain.md"))).toBe(true);
     expect(existsSync(join(paths.wiki, "concepts", "transformer.md"))).toBe(true);
+    expect(sourcePage).toContain("`raw/sources/SRC-001/extracted.md`");
+    expect(sourcePage).toContain("`raw/sources/SRC-001/manifest.json`");
+    expect(sourcePage).not.toContain("](../raw/");
+
+    const projection = rebuildMetadata(paths);
+    expect(
+      projection.diagnostics.filter((diagnostic) =>
+        ["link_unresolved", "link_path_escape"].includes(diagnostic.code),
+      ),
+    ).toEqual([]);
     expect(res.contradictions).toBe(1);
   });
 

@@ -47,3 +47,33 @@ jobs:
           files: ./coverage/lcov.info
           fail_ci_if_error: false
           verbose: true
+
+  migration-node18:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Pack and execute migration on Node 18
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/legacy vault"
+          unpacked="$RUNNER_TEMP/unpacked"
+          mkdir -p "$fixture/.wiki" "$fixture/wiki/concepts" "$unpacked"
+          printf '{"name":"Node 18 fixture"}\n' > "$fixture/.wiki/config.json"
+          printf '%s\n' '---' 'type: concept' '---' '' 'Node 18 body.' > "$fixture/wiki/concepts/node-18.md"
+          config_hash=$(sha256sum "$fixture/.wiki/config.json" | cut -d' ' -f1)
+          page_hash=$(sha256sum "$fixture/wiki/concepts/node-18.md" | cut -d' ' -f1)
+
+          tarball=$(npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP" --silent)
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$unpacked"
+          node "$unpacked/package/scripts/migrate-llm-wiki.js" "$fixture" --force
+
+          test -f "$fixture/.llm-wiki/config.json"
+          test -f "$fixture/.llm-wiki/wiki/concepts/node-18.md"
+          test "$(sha256sum "$fixture/.llm-wiki/config.json" | cut -d' ' -f1)" = "$config_hash"
+          test "$(sha256sum "$fixture/.llm-wiki/wiki/concepts/node-18.md" | cut -d' ' -f1)" = "$page_hash"

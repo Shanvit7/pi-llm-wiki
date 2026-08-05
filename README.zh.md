@@ -7,7 +7,7 @@
 [![CI](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/ci.yml/badge.svg)](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@zosmaai/pi-llm-wiki)](https://www.npmjs.com/package/@zosmaai/pi-llm-wiki)
 [![npm downloads](https://img.shields.io/npm/dm/@zosmaai/pi-llm-wiki)](https://www.npmjs.com/package/@zosmaai/pi-llm-wiki)
-[![Coverage](https://codecov.io/gh/zosmaai/pi-llm-wiki/branch/main/graph/badge.svg)](https://codecov.io/gh/zosmaai/pi-llm-wiki)
+[![Coverage](https://img.shields.io/badge/coverage-85.09%25-brightgreen.svg)](https://codecov.io/gh/zosmaai/pi-llm-wiki)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CodeQL](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/codeql.yml/badge.svg)](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/codeql.yml)
 [![GitHub Repo Stars](https://img.shields.io/github/stars/zosmaai/pi-llm-wiki?style=social)](https://github.com/zosmaai/pi-llm-wiki/stargazers)
@@ -94,7 +94,7 @@ pi install npm:@zosmaai/pi-llm-wiki
 | 📝 **Obsidian 友好** | 文件夹限定 wikilinks、稳定来源 ID 引用、兼容 vault |
 | 🛡️ **护栏** | 阻止直接编辑原始来源和生成的元数据 |
 | 🔧 **可配置的 PDF 提取** | 通过 `WIKI_MARKITDOWN_TIMEOUT_MS` 环境变量设置 MarkItDown 超时 |
-| 🧪 **38+ 测试、CI、CodeQL** | TypeScript、Vitest、Biome、Codecov |
+| 🧪 **562 测试、85.09% 覆盖率** | TypeScript、Vitest、Biome、Codecov、CodeQL |
 
 ---
 

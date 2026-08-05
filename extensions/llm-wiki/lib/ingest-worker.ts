@@ -179,8 +179,8 @@ ${quotes}
 ${contradictions}## Source Packet
 
 - **ID:** \`sources/${id}\`
-- **Extracted:** [raw/sources/${id}/extracted.md](../raw/sources/${id}/extracted.md)
-- **Manifest:** [raw/sources/${id}/manifest.json](../raw/sources/${id}/manifest.json)
+- **Extracted:** \`raw/sources/${id}/extracted.md\`
+- **Manifest:** \`raw/sources/${id}/manifest.json\`
 `;
 }
 

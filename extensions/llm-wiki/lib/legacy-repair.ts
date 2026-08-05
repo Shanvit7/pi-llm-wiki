@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  constants,
   chmodSync,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -210,24 +212,45 @@ function prepareReplacement(
   metadata: Pick<RepairJournalEntry, "mode" | "atime_ms" | "mtime_ms">,
 ): void {
   const mode = metadata.mode & 0o7777;
-  if (existsSync(path)) {
-    if (sha256(readFileSync(path)) !== sha256(content)) {
+  let created = false;
+  try {
+    const existing = readFileSync(path);
+    if (sha256(existing) !== sha256(content)) {
       throw new Error(`Legacy repair temporary file changed: ${path}`);
     }
-    chmodSync(path, mode);
-    utimesSync(path, new Date(metadata.atime_ms), new Date(metadata.mtime_ms));
-  } else {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const handle = openSync(path, "wx", mode);
     try {
       writeFileSync(handle, content);
       fsyncSync(handle);
+      created = true;
     } finally {
       closeSync(handle);
     }
   }
+  if (!created) {
+    chmodSync(path, mode);
+    utimesSync(path, new Date(metadata.atime_ms), new Date(metadata.mtime_ms));
+  }
   chmodSync(path, mode);
   utimesSync(path, new Date(metadata.atime_ms), new Date(metadata.mtime_ms));
   syncDirectory(dirname(path));
+}
+
+function readRegularFile(path: string): { stat: ReturnType<typeof fstatSync>; content: Buffer } {
+  const flags =
+    process.platform === "win32" ? "r" : constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+  const handle = openSync(path, flags);
+  try {
+    const stat = fstatSync(handle);
+    if (!stat.isFile() || stat.nlink !== 1) {
+      throw new Error(`Legacy repair requires a regular, non-hard-linked file: ${path}`);
+    }
+    return { stat, content: readFileSync(handle) };
+  } finally {
+    closeSync(handle);
+  }
 }
 
 function installReplacement(
@@ -458,11 +481,7 @@ function createJournal(
     left < right ? -1 : left > right ? 1 : 0,
   )) {
     const pagePath = containedPath(paths.wiki, path, paths.root);
-    const stat = lstatSync(pagePath);
-    if (!stat.isFile() || stat.nlink !== 1) {
-      throw new Error(`Legacy repair requires a regular, non-hard-linked file: ${path}`);
-    }
-    const original = readFileSync(pagePath);
+    const { stat, content: original } = readRegularFile(pagePath);
     const content = original.toString("utf8");
     if (!Buffer.from(content).equals(original))
       throw new Error(`Legacy page is not UTF-8: ${path}`);
@@ -485,9 +504,9 @@ function createJournal(
       before_sha256: sha256(original),
       after_sha256: sha256(repaired),
       diagnostics: codes,
-      mode: stat.mode,
-      atime_ms: stat.atimeMs,
-      mtime_ms: stat.mtimeMs,
+      mode: Number(stat.mode),
+      atime_ms: Number(stat.atimeMs),
+      mtime_ms: Number(stat.mtimeMs),
     });
   }
 

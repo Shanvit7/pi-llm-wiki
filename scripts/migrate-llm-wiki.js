@@ -28,7 +28,9 @@
 const { createHash, randomUUID } = require("node:crypto");
 const {
   closeSync,
+  constants,
   existsSync,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -66,6 +68,39 @@ function log(action, ...args) {
 const JOURNAL_NAME = "MIGRATION_TO_LLM_WIKI.json";
 const JOURNAL_VERSION = 1;
 
+function readRegularFile(path, encoding) {
+  const flags =
+    process.platform === "win32" ? "r" : constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+  const handle = openSync(path, flags);
+  try {
+    if (!fstatSync(handle).isFile()) throw new Error(`Expected regular file: ${path}`);
+    return readFileSync(handle, encoding);
+  } finally {
+    closeSync(handle);
+  }
+}
+
+function readEntry(path) {
+  const flags =
+    process.platform === "win32" ? "r" : constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0);
+  let handle;
+  try {
+    handle = openSync(path, flags);
+    const stat = fstatSync(handle);
+    if (stat.isFile()) return { kind: "file", content: readFileSync(handle) };
+    if (stat.isDirectory()) return { kind: "directory" };
+    throw new Error(`Unsupported filesystem entry: ${path}`);
+  } catch (error) {
+    if ((error.code === "ELOOP" || error.code === "EPERM") && lstatSync(path).isSymbolicLink()) {
+      return { kind: "symlink", target: readlinkSync(path) };
+    }
+    if (error.code === "EISDIR" && lstatSync(path).isDirectory()) return { kind: "directory" };
+    throw error;
+  } finally {
+    if (handle !== undefined) closeSync(handle);
+  }
+}
+
 function hashPath(path) {
   const hash = createHash("sha256");
   function part(value) {
@@ -76,22 +111,20 @@ function hashPath(path) {
     hash.update(bytes);
   }
   function visit(current, rel) {
-    const stat = lstatSync(current);
-    if (stat.isDirectory()) {
+    const entry = readEntry(current);
+    if (entry.kind === "directory") {
       part("dir");
       part(rel);
-      for (const entry of readdirSync(current).sort())
-        visit(join(current, entry), join(rel, entry));
-    } else if (stat.isFile()) {
+      for (const child of readdirSync(current).sort())
+        visit(join(current, child), join(rel, child));
+    } else if (entry.kind === "file") {
       part("file");
       part(rel);
-      part(readFileSync(current));
-    } else if (stat.isSymbolicLink()) {
+      part(entry.content);
+    } else {
       part("symlink");
       part(rel);
-      part(readlinkSync(current));
-    } else {
-      throw new Error(`Unsupported filesystem entry: ${current}`);
+      part(entry.target);
     }
   }
   visit(path, ".");
@@ -324,16 +357,24 @@ function executeMovePlan(
 
   try {
     if (resuming) {
-      if (!existsSync(newRoot)) {
+      try {
         mkdirSync(newRoot);
         ownsRoot = true;
         syncDirectory(dirname(newRoot));
+      } catch (error) {
+        if (error.code !== "EEXIST") throw error;
       }
-      if (existsSync(ownerPath)) {
-        if (lstatSync(ownerPath).isSymbolicLink()) {
+      let ownerContent;
+      try {
+        if (process.platform === "win32" && lstatSync(ownerPath).isSymbolicLink()) {
           throw new Error(`Migration owner marker is symlinked: ${ownerPath}`);
         }
-        if (readFileSync(ownerPath, "utf8") !== `${journal.operation_id}\n`) {
+        ownerContent = readRegularFile(ownerPath, "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      if (ownerContent !== undefined) {
+        if (ownerContent !== `${journal.operation_id}\n`) {
           throw new Error(`Migration destination is owned by another operation: ${newRoot}`);
         }
         ownsRoot = true;

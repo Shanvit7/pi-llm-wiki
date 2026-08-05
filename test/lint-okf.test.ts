@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import {
   chmodSync,
   existsSync,
@@ -31,9 +32,15 @@ const root = join(import.meta.dirname, "..", "tmp", `lint-okf-${Date.now()}`);
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 function snapshotTree(path = root, base = root): Record<string, unknown> {
-  if (!existsSync(path)) return {};
   const result: Record<string, unknown> = {};
-  for (const entry of readdirSync(path, { withFileTypes: true })) {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(path, { withFileTypes: true });
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return result;
+    throw error;
+  }
+  for (const entry of entries) {
     const fullPath = join(path, entry.name);
     const relativePath = fullPath.slice(base.length + 1).replace(/\\/g, "/");
     const stat = lstatSync(fullPath);

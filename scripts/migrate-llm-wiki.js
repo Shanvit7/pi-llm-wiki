@@ -25,15 +25,22 @@
  *   node scripts/migrate-llm-wiki.js --fix-doubled ~/  # …at a specific root
  */
 
+const { createHash, randomUUID } = require("node:crypto");
 const {
   closeSync,
   existsSync,
+  fsyncSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readdirSync,
+  readlinkSync,
   renameSync,
   rmdirSync,
+  statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } = require("node:fs");
@@ -56,63 +63,243 @@ function log(action, ...args) {
   console.log(`${prefix} ${action}`, ...args);
 }
 
+const JOURNAL_NAME = "MIGRATION_TO_LLM_WIKI.json";
+const JOURNAL_VERSION = 1;
+
+function hashPath(path) {
+  const hash = createHash("sha256");
+  function part(value) {
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const length = Buffer.allocUnsafe(8);
+    length.writeBigUInt64BE(BigInt(bytes.length));
+    hash.update(length);
+    hash.update(bytes);
+  }
+  function visit(current, rel) {
+    const stat = lstatSync(current);
+    if (stat.isDirectory()) {
+      part("dir");
+      part(rel);
+      for (const entry of readdirSync(current).sort())
+        visit(join(current, entry), join(rel, entry));
+    } else if (stat.isFile()) {
+      part("file");
+      part(rel);
+      part(readFileSync(current));
+    } else if (stat.isSymbolicLink()) {
+      part("symlink");
+      part(rel);
+      part(readlinkSync(current));
+    } else {
+      throw new Error(`Unsupported filesystem entry: ${current}`);
+    }
+  }
+  visit(path, ".");
+  return hash.digest("hex");
+}
+
+function assertSameDevice(path, device) {
+  const stat = lstatSync(path);
+  if (stat.dev !== device) throw new Error(`Cross-device migration entry is unsupported: ${path}`);
+  if (stat.isDirectory()) {
+    for (const entry of readdirSync(path)) assertSameDevice(join(path, entry), device);
+  }
+}
+
+function syncDirectory(path) {
+  let handle;
+  try {
+    handle = openSync(path, "r");
+    fsyncSync(handle);
+  } catch (error) {
+    if (process.platform !== "win32") throw error;
+  } finally {
+    if (handle !== undefined) closeSync(handle);
+  }
+}
+
+function writeDurableFile(path, content, exclusive = false) {
+  const handle = openSync(path, exclusive ? "wx" : "w");
+  try {
+    writeFileSync(handle, content, "utf8");
+    fsyncSync(handle);
+  } finally {
+    closeSync(handle);
+  }
+  if (exclusive) syncDirectory(dirname(path));
+}
+
+function writeJournal(path, journal, exclusive = false) {
+  const content = `${JSON.stringify(journal, null, 2)}\n`;
+  if (exclusive) {
+    writeDurableFile(path, content, true);
+    return;
+  }
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeDurableFile(temporary, content, true);
+  renameSync(temporary, path);
+  syncDirectory(dirname(path));
+}
+
+function readJournal(path, root) {
+  const journal = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    journal.version !== JOURNAL_VERSION ||
+    journal.root !== root ||
+    !Array.isArray(journal.items) ||
+    typeof journal.started !== "string" ||
+    typeof journal.operation_id !== "string"
+  ) {
+    throw new Error(`Invalid migration journal: ${path}`);
+  }
+  return journal;
+}
+
 function moveNoClobber(item) {
   mkdirSync(dirname(item.dest), { recursive: true });
   if (item.type === "file") {
     // Hard-link creation is atomic and fails with EEXIST instead of replacing a raced file.
     linkSync(item.src, item.dest);
-    try {
-      unlinkSync(item.src);
-    } catch (error) {
-      unlinkSync(item.dest);
-      throw error;
-    }
+    syncDirectory(dirname(item.dest));
+    unlinkSync(item.src);
+    syncDirectory(dirname(item.src));
+    return;
+  }
+  if (item.type === "symlink") {
+    symlinkSync(readlinkSync(item.src), item.dest);
+    syncDirectory(dirname(item.dest));
+    unlinkSync(item.src);
+    syncDirectory(dirname(item.src));
     return;
   }
   if (existsSync(item.dest)) throw new Error(`Destination appeared: ${item.dest}`);
   renameSync(item.src, item.dest);
+  syncDirectory(dirname(item.dest));
+  syncDirectory(dirname(item.src));
 }
 
 function restoreMove(item) {
   mkdirSync(dirname(item.src), { recursive: true });
   if (item.type === "file") {
     linkSync(item.dest, item.src);
+    syncDirectory(dirname(item.src));
     unlinkSync(item.dest);
+    syncDirectory(dirname(item.dest));
+    return;
+  }
+  if (item.type === "symlink") {
+    symlinkSync(readlinkSync(item.dest), item.src);
+    syncDirectory(dirname(item.src));
+    unlinkSync(item.dest);
+    syncDirectory(dirname(item.dest));
     return;
   }
   if (existsSync(item.src)) throw new Error(`Rollback source exists: ${item.src}`);
   renameSync(item.dest, item.src);
+  syncDirectory(dirname(item.src));
+  syncDirectory(dirname(item.dest));
 }
 
-function executeMovePlan(plan, newRoot, forwardingMarker, markerContent) {
-  const rootExisted = existsSync(newRoot);
+function completeOrResumeMove(item) {
+  const sourceExists = existsSync(item.src);
+  const destinationExists = existsSync(item.dest);
+
+  if (sourceExists && destinationExists) {
+    if (item.type === "file") {
+      const source = statSync(item.src);
+      const destination = statSync(item.dest);
+      if (source.dev === destination.dev && source.ino === destination.ino) {
+        unlinkSync(item.src);
+        syncDirectory(dirname(item.src));
+        return;
+      }
+    }
+    if (item.type === "symlink" && readlinkSync(item.src) === readlinkSync(item.dest)) {
+      unlinkSync(item.src);
+      syncDirectory(dirname(item.src));
+      return;
+    }
+    throw new Error(`Both source and destination exist: ${item.src} → ${item.dest}`);
+  }
+
+  if (sourceExists) {
+    if (hashPath(item.src) !== item.digest) throw new Error(`Source changed: ${item.src}`);
+    moveNoClobber(item);
+  } else if (!destinationExists) {
+    throw new Error(`Both source and destination are missing: ${item.name}`);
+  }
+
+  if (hashPath(item.dest) !== item.digest)
+    throw new Error(`Destination verification failed: ${item.dest}`);
+}
+
+function executeMovePlan(
+  plan,
+  newRoot,
+  forwardingMarker,
+  markerContent,
+  journalPath,
+  journal,
+  ownerPath,
+  resuming,
+) {
   const moved = [];
-  let markerHandle;
   let ownsMarker = false;
 
   try {
-    // Reserve the marker atomically before moving anything. A raced marker is never truncated.
-    markerHandle = openSync(forwardingMarker, "wx");
-    ownsMarker = true;
+    if (resuming) {
+      if (!existsSync(newRoot)) {
+        mkdirSync(newRoot);
+        syncDirectory(dirname(newRoot));
+      }
+      if (existsSync(ownerPath)) {
+        if (readFileSync(ownerPath, "utf8") !== `${journal.operation_id}\n`) {
+          throw new Error(`Migration destination is owned by another operation: ${newRoot}`);
+        }
+      } else if (!journal.finalizing) {
+        if (readdirSync(newRoot).length > 0) {
+          throw new Error(`Migration owner marker is missing: ${ownerPath}`);
+        }
+        writeDurableFile(ownerPath, `${journal.operation_id}\n`, true);
+      }
+    } else {
+      // Reserve the whole destination namespace atomically after preflight.
+      mkdirSync(newRoot);
+      syncDirectory(dirname(newRoot));
+      writeDurableFile(ownerPath, `${journal.operation_id}\n`, true);
+    }
     for (const item of plan) {
       log(`MOVE ${item.name}: ${item.src} → ${item.dest}`);
-      moveNoClobber(item);
-      moved.push(item);
+      const sourceExisted = existsSync(item.src);
+      if (sourceExisted) moved.push(item);
+      completeOrResumeMove(item);
+      if (!sourceExisted) moved.push(item);
+      if (!journal.completed.includes(item.name)) journal.completed.push(item.name);
+      writeJournal(journalPath, journal);
+      if (sourceExisted && process.env.LLM_WIKI_MIGRATION_PAUSE_AFTER === item.name) {
+        process.kill(process.pid, "SIGSTOP");
+      }
     }
-    writeFileSync(markerHandle, markerContent, "utf8");
-    closeSync(markerHandle);
-    markerHandle = undefined;
+
+    if (existsSync(forwardingMarker)) {
+      if (readFileSync(forwardingMarker, "utf8") !== markerContent) {
+        throw new Error(`Destination appeared: ${forwardingMarker}`);
+      }
+    } else {
+      writeDurableFile(forwardingMarker, markerContent, true);
+      ownsMarker = true;
+    }
     log("CREATE forwarding marker: .wiki/MIGRATED_TO_LLM_WIKI.md");
+    journal.finalizing = true;
+    writeJournal(journalPath, journal);
+    if (existsSync(ownerPath)) {
+      unlinkSync(ownerPath);
+      syncDirectory(dirname(ownerPath));
+    }
+    unlinkSync(journalPath);
+    syncDirectory(dirname(journalPath));
   } catch (error) {
     const rollbackErrors = [];
-    if (markerHandle !== undefined) {
-      try {
-        closeSync(markerHandle);
-      } catch (closeError) {
-        rollbackErrors.push(`marker close: ${closeError.message}`);
-      }
-      markerHandle = undefined;
-    }
     if (ownsMarker && existsSync(forwardingMarker)) {
       try {
         unlinkSync(forwardingMarker);
@@ -127,12 +314,22 @@ function executeMovePlan(plan, newRoot, forwardingMarker, markerContent) {
         rollbackErrors.push(`${item.name}: ${rollbackError.message}`);
       }
     }
-    if (!rootExisted) {
+    if (rollbackErrors.length === 0) {
       try {
-        rmdirSync(newRoot);
-      } catch {
-        // A non-empty directory is evidence preserved for manual recovery.
+        if (existsSync(ownerPath)) {
+          const owner = readFileSync(ownerPath, "utf8");
+          if (owner === `${journal.operation_id}\n`) unlinkSync(ownerPath);
+        }
+        if (existsSync(journalPath)) unlinkSync(journalPath);
+        syncDirectory(dirname(journalPath));
+      } catch (journalError) {
+        rollbackErrors.push(`journal cleanup: ${journalError.message}`);
       }
+    }
+    try {
+      rmdirSync(newRoot);
+    } catch {
+      // A non-empty directory is evidence preserved for manual recovery.
     }
     const rollback = rollbackErrors.length
       ? ` Rollback errors: ${rollbackErrors.join("; ")}`
@@ -238,29 +435,15 @@ async function main() {
 
   console.log(`\n🔍 Scanning for legacy wiki at: ${root}\n`);
 
-  // Check for old-style vault
   const oldSentinel = join(root, ".wiki", "config.json");
-  const newSentinel = join(root, ".llm-wiki", "config.json");
+  const newRoot = join(root, ".llm-wiki");
+  const newSentinel = join(newRoot, "config.json");
+  const forwardingMarker = join(root, ".wiki", "MIGRATED_TO_LLM_WIKI.md");
+  const journalPath = join(root, ".wiki", JOURNAL_NAME);
+  const ownerPath = join(newRoot, ".migration-owner");
+  const resuming = existsSync(journalPath);
 
-  if (!existsSync(oldSentinel)) {
-    console.log("❌ No legacy wiki found (no .wiki/config.json). Nothing to migrate.");
-    if (existsSync(newSentinel)) {
-      console.log("   ✓ New-format wiki already exists at .llm-wiki/");
-    } else {
-      console.log("   No wiki vault found. Use wiki_bootstrap to create one.");
-    }
-    process.exit(0);
-  }
-
-  if (existsSync(newSentinel)) {
-    console.log(
-      "⚠️  Both legacy (.wiki/) and new (.llm-wiki/) vaults detected.\n" +
-        "   The new vault already exists. Remove .llm-wiki/ first or specify a different root.",
-    );
-    process.exit(1);
-  }
-
-  // Migration plan
+  // Full plan is deterministic so a journal never controls arbitrary paths.
   const moves = [
     {
       src: join(root, ".wiki", "config.json"),
@@ -304,49 +487,91 @@ async function main() {
       type: "dir",
       name: "discovery tracking",
     },
+    {
+      src: join(root, "WIKI_SCHEMA.md"),
+      dest: join(newRoot, "WIKI_SCHEMA.md"),
+      type: "file",
+      name: "WIKI_SCHEMA",
+    },
   ];
 
-  // Check for WIKI_SCHEMA.md at root
-  const oldSchema = join(root, "WIKI_SCHEMA.md");
-  const schemas = [];
-  if (existsSync(oldSchema)) {
-    schemas.push({ src: oldSchema, dest: join(root, ".llm-wiki", "WIKI_SCHEMA.md") });
-  }
+  let journal;
+  let movePlan;
+  if (resuming) {
+    journal = readJournal(journalPath, root);
+    const journalItems = new Map(
+      journal.items.map((item) => {
+        if (!item || typeof item.name !== "string" || typeof item.digest !== "string") {
+          throw new Error(`Invalid migration journal item: ${journalPath}`);
+        }
+        return [item.name, item.digest];
+      }),
+    );
+    movePlan = moves
+      .filter((item) => journalItems.has(item.name))
+      .map((item) => ({ ...item, digest: journalItems.get(item.name) }));
+    if (movePlan.length !== journalItems.size || !Array.isArray(journal.completed)) {
+      throw new Error(`Invalid migration journal plan: ${journalPath}`);
+    }
+    console.log(`↻ Resuming interrupted migration from ${journal.started}`);
+  } else {
+    if (!existsSync(oldSentinel)) {
+      console.log("❌ No legacy wiki found (no .wiki/config.json). Nothing to migrate.");
+      if (existsSync(newSentinel)) {
+        console.log("   ✓ New-format wiki already exists at .llm-wiki/");
+      } else {
+        console.log("   No wiki vault found. Use wiki_bootstrap to create one.");
+      }
+      process.exit(0);
+    }
 
-  const newRoot = join(root, ".llm-wiki");
-  const forwardingMarker = join(root, ".wiki", "MIGRATED_TO_LLM_WIKI.md");
-  const movePlan = [
-    ...moves,
-    ...schemas.map((schema) => ({ ...schema, type: "file", name: "WIKI_SCHEMA" })),
-  ].filter((item) => existsSync(item.src));
-  const conflicts = [
-    ...movePlan.filter((item) => existsSync(item.dest)),
-    ...(existsSync(forwardingMarker)
-      ? [{ dest: forwardingMarker, name: "forwarding marker" }]
-      : []),
-  ];
+    const rootDevice = statSync(root).dev;
+    movePlan = moves
+      .filter((item) => existsSync(item.src))
+      .map((item) => {
+        assertSameDevice(item.src, rootDevice);
+        return { ...item, digest: hashPath(item.src) };
+      });
+    const conflicts = [
+      ...movePlan.filter((item) => existsSync(item.dest)),
+      ...(existsSync(newRoot) && !movePlan.some((item) => existsSync(item.dest))
+        ? [{ dest: newRoot, name: "destination root" }]
+        : []),
+      ...(existsSync(forwardingMarker)
+        ? [{ dest: forwardingMarker, name: "forwarding marker" }]
+        : []),
+    ];
 
-  if (conflicts.length > 0) {
-    console.log("\n❌ Migration blocked by destination conflicts:");
-    for (const conflict of conflicts) console.log(`   ${conflict.dest}`);
-    console.log("   No files were moved. Resolve these paths and rerun the migration.");
-    process.exit(1);
+    if (conflicts.length > 0) {
+      console.log("\n❌ Migration blocked by destination conflicts:");
+      for (const conflict of conflicts) console.log(`   ${conflict.dest}`);
+      console.log("   No files were moved. Resolve these paths and rerun the migration.");
+      process.exit(1);
+    }
+
+    const started = new Date().toISOString();
+    journal = {
+      version: JOURNAL_VERSION,
+      operation_id: randomUUID(),
+      root,
+      started,
+      items: movePlan.map(({ name, digest }) => ({ name, digest })),
+      completed: [],
+    };
   }
 
   // Print plan
   console.log("📋 Migration plan:");
   console.log("   Legacy format → New format");
   console.log("   ─────────────────────────────");
-  for (const m of moves) {
-    console.log(`   ${existsSync(m.src) ? "✓" : "○"} ${m.name}: ${m.src} → ${m.dest}`);
-  }
-  for (const s of schemas) {
-    console.log(`   ✓ WIKI_SCHEMA: ${s.src} → ${s.dest}`);
+  for (const item of moves) {
+    const included = movePlan.some((candidate) => candidate.name === item.name);
+    console.log(`   ${included ? "✓" : "○"} ${item.name}: ${item.src} → ${item.dest}`);
   }
 
   // Remaining .wiki/ dir contents (after config + templates moved)
   const dotWikiContents = readdirSync(join(root, ".wiki")).filter(
-    (e) => e !== "config.json" && e !== "templates",
+    (entry) => entry !== "config.json" && entry !== "templates" && entry !== JOURNAL_NAME,
   );
   if (dotWikiContents.length > 0) {
     console.log(
@@ -376,7 +601,7 @@ async function main() {
   const markerContent = [
     "# Migration Complete",
     "",
-    `This vault was migrated to the new layout at \`.llm-wiki/\` on ${new Date().toISOString().split("T")[0]}.`,
+    `This vault was migrated to the new layout at \`.llm-wiki/\` on ${journal.started.split("T")[0]}.`,
     "",
     "The old `.wiki/` directory is kept as a forwarding marker.",
     "Remove it once you've verified everything works.",
@@ -387,8 +612,19 @@ async function main() {
 
   // Execute
   console.log("");
-  if (!DRY_RUN) executeMovePlan(movePlan, newRoot, forwardingMarker, markerContent);
-  else {
+  if (!DRY_RUN) {
+    if (!resuming) writeJournal(journalPath, journal, true);
+    executeMovePlan(
+      movePlan,
+      newRoot,
+      forwardingMarker,
+      markerContent,
+      journalPath,
+      journal,
+      ownerPath,
+      resuming,
+    );
+  } else {
     for (const item of movePlan) log(`MOVE ${item.name}: ${item.src} → ${item.dest}`);
   }
 

@@ -233,6 +233,48 @@ describe("migrate-llm-wiki CLI", () => {
     }
   });
 
+  it("resumes an interrupted migration after SIGKILL without losing bytes", async () => {
+    if (process.platform === "win32") return;
+    const root = tempRoot("pi interrupted migration ");
+    seedLegacy(root);
+    const before = snapshot(root);
+    const journalPath = join(root, ".wiki", "MIGRATION_TO_LLM_WIKI.json");
+    const child = spawn(process.execPath, [script, root, "--force"], {
+      cwd: rootDir,
+      env: { ...process.env, LLM_WIKI_MIGRATION_PAUSE_AFTER: "config" },
+      stdio: "pipe",
+    });
+
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (existsSync(journalPath)) {
+        const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
+          completed?: string[];
+        };
+        if (journal.completed?.includes("config")) break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(existsSync(journalPath)).toBe(true);
+    expect(
+      (JSON.parse(readFileSync(journalPath, "utf8")) as { completed: string[] }).completed,
+    ).toContain("config");
+
+    child.kill("SIGKILL");
+    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => child.once("exit", (code, signal) => resolve({ code, signal })),
+    );
+    expect(exit.signal).toBe("SIGKILL");
+    expect(existsSync(join(root, ".wiki", "config.json"))).toBe(false);
+    expect(existsSync(join(root, ".llm-wiki", "config.json"))).toBe(true);
+
+    const resumed = runMigration([root, "--force"]);
+    expect(resumed.status, resumed.stderr).toBe(0);
+    expect(resumed.stdout).toContain("Resuming interrupted migration");
+    expect(existsSync(journalPath)).toBe(false);
+    assertMigrated(root, before);
+  });
+
   it("does not overwrite a doubled-layout entry raced in after confirmation", async () => {
     const root = tempRoot("pi doubled race ");
     const inner = join(root, ".llm-wiki", ".llm-wiki");

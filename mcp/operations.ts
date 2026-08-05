@@ -17,7 +17,7 @@ import {
   inspectVaultFormat,
   inspectWritableVault,
 } from "../extensions/llm-wiki/lib/vault-format.js";
-import { searchRegistry } from "../extensions/llm-wiki/lib/wiki-service.js";
+import { getWikiStatus, searchRegistry } from "../extensions/llm-wiki/lib/wiki-service.js";
 
 function projectionOutcome(
   projection: ProjectionResult,
@@ -71,7 +71,6 @@ export async function statusOperation(paths: VaultPaths): Promise<{
   blockingDiagnostics: Array<{ code: string; message: string }>;
   lastUpdated: string;
 }> {
-  const { getWikiStatus } = await import("../extensions/llm-wiki/lib/wiki-service.js");
   const status = getWikiStatus(paths);
   return {
     knowledgeFormat: status.knowledgeFormat,

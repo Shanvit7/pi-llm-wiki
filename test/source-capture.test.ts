@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
 import { captureFile, captureText, captureUrl } from "../extensions/llm-wiki/lib/source-packet.js";
 import { ensureVaultStructure, getVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
 import { mockPi, mockPiWithMarkItDown, readFile } from "./helpers.js";
@@ -108,6 +109,24 @@ describe("source packet capture", () => {
     expect(sourcePage).toContain("# My Note");
     expect(sourcePage).not.toContain("Original:");
     expect(sourcePage).toContain("_Auto-preview: Some text content_");
+  });
+
+  it("emits no unresolved first-party links in a captured skeleton page", () => {
+    const paths = makePaths();
+    const result = captureText(paths, "Some text content", "My Note");
+    const sourcePage = readFile(result.sourcePagePath);
+
+    expect(sourcePage).toContain(`\`raw/sources/${result.sourceId}/extracted.md\``);
+    expect(sourcePage).toContain(`\`raw/sources/${result.sourceId}/manifest.json\``);
+    expect(sourcePage).not.toContain("](/entities/entity-name.md)");
+    expect(sourcePage).not.toContain("](/concepts/concept-name.md)");
+
+    const projection = rebuildMetadata(paths);
+    expect(
+      projection.diagnostics.filter((diagnostic) =>
+        ["link_unresolved", "link_path_escape"].includes(diagnostic.code),
+      ),
+    ).toEqual([]);
   });
 
   it("should truncate auto-preview to 500 characters", async () => {

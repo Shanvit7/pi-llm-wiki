@@ -279,26 +279,33 @@ function nextSequentialId(dir: string, kind: string): string {
 /**
  * Slugify a title to a kebab-case page slug.
  *
- * - NFKC-folds full-width forms (letters/digits/ideographic space) to ASCII
- *   so `ＡＢＣ` and `ABC` produce the same slug.
+ * - Folds full-width ASCII forms and ideographic spaces without changing
+ *   unrelated Unicode compatibility characters.
  * - Collapses whitespace AND existing hyphens into a single `-`.
  * - Trims leading/trailing hyphens.
  * - Prefixes Windows reserved device names (CON, PRN, AUX, NUL, COM1-9,
- *   LPT1-9) with `_` so writing `<slug>.md` never throws on Windows.
+ *   LPT1-9, including superscript 1-3 forms) with `_`.
  * - Appends `-page` to `index`/`log` slugs to avoid colliding with the
  *   special INDEX/LOG wiki pages.
  */
 export function slugify(title: string): string {
   const slug =
     title
-      .toLocaleLowerCase()
-      .normalize("NFKC")
+      .replace(/[\uFF01-\uFF5E]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+      .replace(/\u3000/g, " ")
+      .toLowerCase()
+      .normalize("NFC")
       .replace(/[^\p{L}\p{N}\s-]/gu, "")
       .trim()
       .replace(/[\s-]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .replace(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i, "_$1")
-      .slice(0, 80) || "untitled";
+      .slice(0, 80)
+      .replace(/[\uD800-\uDBFF]$/, "")
+      .replace(/^-+|-+$/g, "") || "untitled";
+
+  if (/^(?:con|prn|aux|nul|com(?:[1-9¹²³])|lpt(?:[1-9¹²³]))$/.test(slug)) {
+    return `_${slug}`;
+  }
   return slug === "index" || slug === "log" ? `${slug}-page` : slug;
 }
 

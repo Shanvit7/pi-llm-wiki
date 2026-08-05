@@ -535,7 +535,7 @@ async function fixDoubled() {
     }
     log(`MOVE ${p.entry}: ${p.src} → ${p.dest}`);
     if (!DRY_RUN && process.env.LLM_WIKI_MIGRATION_PAUSE_BEFORE_DOUBLED === p.entry) {
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      await new Promise((resolve) => process.stdin.once("data", resolve));
     }
     if (!DRY_RUN) moveTreeNoClobber(p.src, p.dest);
     moved++;

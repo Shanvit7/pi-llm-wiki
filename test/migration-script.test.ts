@@ -328,15 +328,22 @@ describe("migrate-llm-wiki CLI", () => {
       env: { ...process.env, LLM_WIKI_MIGRATION_PAUSE_BEFORE_DOUBLED: "meta" },
       stdio: "pipe",
     });
-    const deadline = Date.now() + 5_000;
-    while (!existsSync(join(outer, "config.json")) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    if (!existsSync(join(outer, "config.json"))) {
-      child.kill("SIGKILL");
-      throw new Error("migration did not reach the paused directory move");
-    }
+    const pauseReady = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error("migration did not reach the paused directory move"));
+      }, 5_000);
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (chunk.toString("utf8").includes("MOVE meta:")) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+    await pauseReady;
+    expect(existsSync(join(outer, "config.json"))).toBe(true);
     mkdirSync(join(outer, "meta"));
+    child.stdin.end("continue\n");
     const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
 
     expect(code).toBe(1);

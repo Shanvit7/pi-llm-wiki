@@ -4,6 +4,7 @@ import {
   closeSync,
   existsSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -14,7 +15,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   type DiagnosticCode,
   type KnowledgeDiagnostic,
@@ -136,11 +137,33 @@ function repairedContent(
   );
 }
 
-function containedPath(root: string, path: string): string {
+function containedPath(root: string, path: string, physicalRoot = root): string {
   const target = resolve(root, path);
   const relation = relative(root, target);
-  if (relation === "" || relation === ".." || relation.startsWith(`..${sep}`)) {
+  if (
+    relation === "" ||
+    relation === ".." ||
+    relation.startsWith(`..${sep}`) ||
+    isAbsolute(relation)
+  ) {
     throw new Error(`Unsafe legacy repair path: ${path}`);
+  }
+
+  let current = resolve(physicalRoot);
+  const physicalRelation = relative(current, target);
+  if (
+    physicalRelation === ".." ||
+    physicalRelation.startsWith(`..${sep}`) ||
+    isAbsolute(physicalRelation)
+  ) {
+    throw new Error(`Unsafe legacy repair path: ${path}`);
+  }
+  for (const part of ["", ...physicalRelation.split(sep)]) {
+    if (part) current = join(current, part);
+    if (!existsSync(current)) break;
+    if (lstatSync(current).isSymbolicLink()) {
+      throw new Error(`Legacy repair refuses symlinked path: ${current}`);
+    }
   }
   return target;
 }
@@ -181,23 +204,71 @@ function atomicWriteJson(path: string, value: unknown): void {
   syncDirectory(dirname(path));
 }
 
-function atomicReplace(
+function prepareReplacement(
   path: string,
   content: Buffer,
   metadata: Pick<RepairJournalEntry, "mode" | "atime_ms" | "mtime_ms">,
 ): void {
-  const temporary = `${path}.legacy-repair-${process.pid}-${randomUUID()}`;
-  const handle = openSync(temporary, "wx", metadata.mode & 0o777);
-  try {
-    writeFileSync(handle, content);
-    fsyncSync(handle);
-  } finally {
-    closeSync(handle);
+  const mode = metadata.mode & 0o7777;
+  if (existsSync(path)) {
+    if (sha256(readFileSync(path)) !== sha256(content)) {
+      throw new Error(`Legacy repair temporary file changed: ${path}`);
+    }
+    chmodSync(path, mode);
+    utimesSync(path, new Date(metadata.atime_ms), new Date(metadata.mtime_ms));
+  } else {
+    const handle = openSync(path, "wx", mode);
+    try {
+      writeFileSync(handle, content);
+      fsyncSync(handle);
+    } finally {
+      closeSync(handle);
+    }
   }
-  chmodSync(temporary, metadata.mode & 0o777);
-  utimesSync(temporary, new Date(metadata.atime_ms), new Date(metadata.mtime_ms));
-  renameSync(temporary, path);
+  chmodSync(path, mode);
+  utimesSync(path, new Date(metadata.atime_ms), new Date(metadata.mtime_ms));
   syncDirectory(dirname(path));
+}
+
+function installReplacement(
+  paths: VaultPaths,
+  pagePath: string,
+  repaired: Buffer,
+  entry: RepairJournalEntry,
+  transactionDir: string,
+): void {
+  const preparedPath = `${pagePath}.legacy-repair-${entry.after_sha256.slice(0, 16)}`;
+  const displacedPath = containedPath(join(transactionDir, "displaced"), entry.path, paths.root);
+  containedPath(paths.wiki, entry.path, paths.root);
+  containedPath(paths.wiki, relative(paths.wiki, preparedPath), paths.root);
+  ensurePrivateParent(displacedPath);
+  prepareReplacement(preparedPath, repaired, entry);
+
+  if (existsSync(pagePath) && !existsSync(displacedPath)) {
+    renameSync(pagePath, displacedPath);
+    syncDirectory(dirname(pagePath));
+    syncDirectory(dirname(displacedPath));
+  }
+
+  if (!existsSync(displacedPath) || sha256(readFileSync(displacedPath)) !== entry.before_sha256) {
+    if (!existsSync(pagePath) && existsSync(displacedPath)) {
+      renameSync(displacedPath, pagePath);
+      syncDirectory(dirname(pagePath));
+      syncDirectory(dirname(displacedPath));
+    }
+    if (existsSync(preparedPath)) unlinkSync(preparedPath);
+    throw new Error(`Legacy page changed during repair: ${entry.path}`);
+  }
+
+  try {
+    linkSync(preparedPath, pagePath);
+    syncDirectory(dirname(pagePath));
+    unlinkSync(preparedPath);
+    syncDirectory(dirname(preparedPath));
+  } catch (error) {
+    if (existsSync(preparedPath)) unlinkSync(preparedPath);
+    throw error;
+  }
 }
 
 function processAlive(pid: unknown): boolean {
@@ -212,23 +283,48 @@ function processAlive(pid: unknown): boolean {
 
 function acquireLock(paths: VaultPaths): { path: string; operationId: string } {
   const path = join(paths.dotWiki, ".legacy-repair.lock");
-  if (existsSync(path)) {
-    let stale = true;
-    try {
-      const current = JSON.parse(readFileSync(path, "utf8")) as { pid?: unknown };
-      stale = !processAlive(current.pid);
-    } catch {
-      stale = false;
+  const operationId = randomUUID();
+  const content = `${JSON.stringify({ operation_id: operationId, pid: process.pid, started: new Date().toISOString() })}\n`;
+  try {
+    durableWriteNew(path, content);
+    return { path, operationId };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+
+  let observed: string;
+  let current: { pid?: unknown };
+  try {
+    observed = readFileSync(path, "utf8");
+    current = JSON.parse(observed) as { pid?: unknown };
+  } catch {
+    throw new Error(`Legacy repair lock is unreadable: ${path}`);
+  }
+  if (processAlive(current.pid)) throw new Error(`Legacy repair is already running: ${path}`);
+
+  const takeoverPath = `${path}.takeover`;
+  const takeoverId = randomUUID();
+  try {
+    durableWriteNew(takeoverPath, `${takeoverId}\n`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`Legacy repair lock takeover is already running: ${takeoverPath}`);
     }
-    if (!stale) throw new Error(`Legacy repair is already running: ${path}`);
+    throw error;
+  }
+  try {
+    if (readFileSync(path, "utf8") !== observed || processAlive(current.pid)) {
+      throw new Error(`Legacy repair lock changed during takeover: ${path}`);
+    }
     unlinkSync(path);
     syncDirectory(dirname(path));
+    durableWriteNew(path, content);
+  } finally {
+    if (existsSync(takeoverPath) && readFileSync(takeoverPath, "utf8") === `${takeoverId}\n`) {
+      unlinkSync(takeoverPath);
+      syncDirectory(dirname(takeoverPath));
+    }
   }
-  const operationId = randomUUID();
-  durableWriteNew(
-    path,
-    `${JSON.stringify({ operation_id: operationId, pid: process.pid, started: new Date().toISOString() })}\n`,
-  );
   return { path, operationId };
 }
 
@@ -270,24 +366,33 @@ function applyJournal(
   journal: RepairJournal,
   diagnostics: KnowledgeDiagnostic[],
   afterCheckpoint?: (path: string) => void,
+  beforeCommit?: (path: string) => void,
 ): LegacyRepairResult {
   const transactionDir = dirname(journalPath);
   for (const entry of journal.entries) {
-    const pagePath = containedPath(paths.wiki, entry.path);
-    const backupPath = containedPath(join(transactionDir, "wiki"), entry.path);
-    const repairedPath = containedPath(join(transactionDir, "repaired"), entry.path);
+    const pagePath = containedPath(paths.wiki, entry.path, paths.root);
+    const backupPath = containedPath(join(transactionDir, "wiki"), entry.path, paths.root);
+    const repairedPath = containedPath(join(transactionDir, "repaired"), entry.path, paths.root);
     const backup = readFileSync(backupPath);
     const repaired = readFileSync(repairedPath);
     if (sha256(backup) !== entry.before_sha256 || sha256(repaired) !== entry.after_sha256) {
       throw new Error(`Legacy repair transaction verification failed: ${entry.path}`);
     }
 
-    const current = readFileSync(pagePath);
-    const currentHash = sha256(current);
-    if (currentHash === entry.before_sha256) {
-      atomicReplace(pagePath, repaired, entry);
+    const currentHash = existsSync(pagePath) ? sha256(readFileSync(pagePath)) : undefined;
+    if (currentHash === entry.before_sha256 || currentHash === undefined) {
+      beforeCommit?.(entry.path);
+      installReplacement(paths, pagePath, repaired, entry, transactionDir);
     } else if (currentHash !== entry.after_sha256) {
       throw new Error(`Legacy page changed during repair: ${entry.path}`);
+    }
+    const preparedPath = `${pagePath}.legacy-repair-${entry.after_sha256.slice(0, 16)}`;
+    if (existsSync(preparedPath)) {
+      if (sha256(readFileSync(preparedPath)) !== entry.after_sha256) {
+        throw new Error(`Legacy repair temporary file changed: ${preparedPath}`);
+      }
+      unlinkSync(preparedPath);
+      syncDirectory(dirname(preparedPath));
     }
     if (!journal.completed.includes(entry.path)) {
       journal.completed.push(entry.path);
@@ -301,7 +406,13 @@ function applyJournal(
     version: 1,
     repaired_at: new Date().toISOString(),
     entries: journal.entries.map(
-      ({ mode: _mode, atime_ms: _atime, mtime_ms: _mtime, ...entry }) => entry,
+      ({ mode: _mode, atime_ms: _atime, mtime_ms: _mtime, ...entry }) => ({
+        ...entry,
+        displaced: relative(
+          paths.root,
+          containedPath(join(transactionDir, "displaced"), entry.path, paths.root),
+        ).replace(/\\/g, "/"),
+      }),
     ),
   });
   unlinkSync(journalPath);
@@ -346,7 +457,7 @@ function createJournal(
   for (const [path, pathDiagnostics] of [...byPath].sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0,
   )) {
-    const pagePath = containedPath(paths.wiki, path);
+    const pagePath = containedPath(paths.wiki, path, paths.root);
     const stat = lstatSync(pagePath);
     if (!stat.isFile() || stat.nlink !== 1) {
       throw new Error(`Legacy repair requires a regular, non-hard-linked file: ${path}`);
@@ -364,8 +475,8 @@ function createJournal(
     if (!parseKnowledgeDocument(repaired.toString("utf8"), path).ok) {
       throw new Error(`Repair did not produce a valid page: ${path}`);
     }
-    const backupPath = containedPath(join(transactionDir, "wiki"), path);
-    const repairedPath = containedPath(join(transactionDir, "repaired"), path);
+    const backupPath = containedPath(join(transactionDir, "wiki"), path, paths.root);
+    const repairedPath = containedPath(join(transactionDir, "repaired"), path, paths.root);
     durableWriteNew(backupPath, original);
     durableWriteNew(repairedPath, repaired);
     entries.push({
@@ -398,15 +509,23 @@ export function repairLegacyKnowledgeDocuments(
   paths: VaultPaths,
   now = new Date(),
   afterCheckpoint?: (path: string) => void,
+  beforeCommit?: (path: string) => void,
 ): LegacyRepairResult {
-  const state = inspectVaultFormat(paths);
-  const discovery = discoverKnowledgeDocuments(paths);
-  if (state.knowledgeFormat !== "legacy") {
-    return { repaired: 0, entries: [], diagnostics: discovery.diagnostics };
+  containedPath(paths.root, relative(paths.root, paths.dotWiki), paths.root);
+  containedPath(paths.root, relative(paths.root, paths.wiki), paths.root);
+  containedPath(paths.root, relative(paths.root, paths.outputs), paths.root);
+  const initialState = inspectVaultFormat(paths);
+  if (initialState.knowledgeFormat !== "legacy") {
+    return { repaired: 0, entries: [], diagnostics: initialState.diagnostics };
   }
 
   const lock = acquireLock(paths);
   try {
+    const state = inspectVaultFormat(paths);
+    const discovery = discoverKnowledgeDocuments(paths);
+    if (state.knowledgeFormat !== "legacy") {
+      return { repaired: 0, entries: [], diagnostics: discovery.diagnostics };
+    }
     const existing = inProgressJournal(paths);
     if (existing) {
       return applyJournal(
@@ -415,6 +534,7 @@ export function repairLegacyKnowledgeDocuments(
         readJournal(existing, paths),
         discovery.diagnostics,
         afterCheckpoint,
+        beforeCommit,
       );
     }
     const created = createJournal(paths, discovery.diagnostics, lock.operationId, now);
@@ -425,6 +545,7 @@ export function repairLegacyKnowledgeDocuments(
       created.journal,
       discovery.diagnostics,
       afterCheckpoint,
+      beforeCommit,
     );
   } finally {
     releaseLock(lock);

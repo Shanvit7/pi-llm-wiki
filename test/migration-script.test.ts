@@ -6,8 +6,10 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,6 +50,36 @@ function runMigration(
     encoding: "utf8",
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+async function interruptAfterConfig(root: string): Promise<string> {
+  const journalPath = join(root, ".wiki", "MIGRATION_TO_LLM_WIKI.json");
+  const child = spawn(process.execPath, [script, root, "--force"], {
+    cwd: rootDir,
+    env: { ...process.env, LLM_WIKI_MIGRATION_PAUSE_AFTER: "config" },
+    stdio: "pipe",
+  });
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (existsSync(journalPath)) {
+      try {
+        const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
+          completed?: string[];
+        };
+        if (journal.completed?.includes("config")) break;
+      } catch {
+        // The initial journal write is fsynced but not atomic; retry while it is incomplete.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(existsSync(journalPath)).toBe(true);
+  child.kill("SIGKILL");
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve) => child.once("exit", (code, signal) => resolve({ code, signal })),
+  );
+  expect(exit.signal).toBe("SIGKILL");
+  return journalPath;
 }
 
 function seedLegacy(root: string): void {
@@ -238,33 +270,7 @@ describe("migrate-llm-wiki CLI", () => {
     const root = tempRoot("pi interrupted migration ");
     seedLegacy(root);
     const before = snapshot(root);
-    const journalPath = join(root, ".wiki", "MIGRATION_TO_LLM_WIKI.json");
-    const child = spawn(process.execPath, [script, root, "--force"], {
-      cwd: rootDir,
-      env: { ...process.env, LLM_WIKI_MIGRATION_PAUSE_AFTER: "config" },
-      stdio: "pipe",
-    });
-
-    const deadline = Date.now() + 10_000;
-    while (Date.now() < deadline) {
-      if (existsSync(journalPath)) {
-        const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
-          completed?: string[];
-        };
-        if (journal.completed?.includes("config")) break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    expect(existsSync(journalPath)).toBe(true);
-    expect(
-      (JSON.parse(readFileSync(journalPath, "utf8")) as { completed: string[] }).completed,
-    ).toContain("config");
-
-    child.kill("SIGKILL");
-    const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve) => child.once("exit", (code, signal) => resolve({ code, signal })),
-    );
-    expect(exit.signal).toBe("SIGKILL");
+    const journalPath = await interruptAfterConfig(root);
     expect(existsSync(join(root, ".wiki", "config.json"))).toBe(false);
     expect(existsSync(join(root, ".llm-wiki", "config.json"))).toBe(true);
 
@@ -273,6 +279,71 @@ describe("migrate-llm-wiki CLI", () => {
     expect(resumed.stdout).toContain("Resuming interrupted migration");
     expect(existsSync(journalPath)).toBe(false);
     assertMigrated(root, before);
+  });
+
+  it("rolls a changed resumed destination back without discarding the journal early", async () => {
+    if (process.platform === "win32") return;
+    const root = tempRoot("pi interrupted changed migration ");
+    seedLegacy(root);
+    const journalPath = await interruptAfterConfig(root);
+    writeFileSync(join(root, ".llm-wiki", "config.json"), "concurrent writer bytes\n");
+
+    const resumed = runMigration([root, "--force"]);
+
+    expect(resumed.status).toBe(1);
+    expect(readFileSync(join(root, ".llm-wiki", "config.json"), "utf8")).toBe(
+      "concurrent writer bytes\n",
+    );
+    expect(existsSync(join(root, ".wiki", "config.json"))).toBe(false);
+    expect(existsSync(join(root, ".llm-wiki"))).toBe(true);
+    expect(existsSync(journalPath)).toBe(true);
+  });
+
+  it("rejects symlinked migration entries before creating a journal", () => {
+    if (process.platform === "win32") return;
+    const root = tempRoot("pi symlink migration ");
+    seedLegacy(root);
+    const link = join(root, "wiki", "concepts", "alias.md");
+    symlinkSync("legacy.md", link);
+
+    const result = runMigration([root, "--force"]);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Symlinked migration entries require manual migration");
+    expect(readlinkSync(link)).toBe("legacy.md");
+    expect(existsSync(join(root, ".wiki", "MIGRATION_TO_LLM_WIKI.json"))).toBe(false);
+    expect(existsSync(join(root, ".llm-wiki"))).toBe(false);
+  });
+
+  it("does not replace a doubled-layout directory raced in after the final check", async () => {
+    if (process.platform === "win32") return;
+    const root = tempRoot("pi doubled directory race ");
+    const outer = join(root, ".llm-wiki");
+    const inner = join(outer, ".llm-wiki");
+    mkdirSync(join(inner, "meta"), { recursive: true });
+    writeFileSync(join(inner, "config.json"), '{"inner":true}\n');
+    writeFileSync(join(inner, "meta", "registry.json"), "inner registry\n");
+    const child = spawn(process.execPath, [script, "--fix-doubled", root, "--force"], {
+      cwd: rootDir,
+      env: { ...process.env, LLM_WIKI_MIGRATION_PAUSE_BEFORE_DOUBLED: "meta" },
+      stdio: "pipe",
+    });
+    const deadline = Date.now() + 5_000;
+    while (!existsSync(join(outer, "config.json")) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (!existsSync(join(outer, "config.json"))) {
+      child.kill("SIGKILL");
+      throw new Error("migration did not reach the paused directory move");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    mkdirSync(join(outer, "meta"));
+    child.kill("SIGCONT");
+    const code = await new Promise<number | null>((resolve) => child.once("close", resolve));
+
+    expect(code).toBe(1);
+    expect(readdirSync(join(outer, "meta"))).toEqual([]);
+    expect(readFileSync(join(inner, "meta", "registry.json"), "utf8")).toBe("inner registry\n");
   });
 
   it("does not overwrite a doubled-layout entry raced in after confirmation", async () => {

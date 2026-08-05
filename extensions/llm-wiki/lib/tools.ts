@@ -31,6 +31,7 @@ import {
   assertWritableVault,
   compareCodePoint,
   discoverKnowledgeDocuments,
+  inspectVaultFormat,
   inspectWritableVault,
 } from "./vault-format.js";
 import { getWikiStatus, searchRegistry } from "./wiki-service.js";
@@ -832,22 +833,39 @@ export function registerWikiLint(pi: ExtensionAPI, runtime?: Runtime): void {
  */
 function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
   assertWritableVault(paths);
-  let projection = rebuildMetadata(paths);
-  const repair = !projection.ok && autoFix ? repairLegacyKnowledgeDocuments(paths) : undefined;
-  if (repair?.repaired) projection = rebuildMetadata(paths);
-  if (!projection.ok) {
-    return [
-      "# Wiki Lint Report",
-      "",
-      repair?.repaired ? `Legacy pages repaired: ${repair.repaired}` : "",
-      repair?.manifestPath ? `Repair manifest: ${repair.manifestPath}` : "",
-      "Projection-blocking diagnostics:",
-      ...projection.diagnostics.map(
-        (diagnostic) => `- ${diagnostic.code}: ${diagnostic.path}: ${diagnostic.message}`,
-      ),
-    ]
-      .filter(Boolean)
-      .join("\n");
+  let repair: ReturnType<typeof repairLegacyKnowledgeDocuments> | undefined;
+  if (autoFix) {
+    let projection = rebuildMetadata(paths);
+    repair = !projection.ok ? repairLegacyKnowledgeDocuments(paths) : undefined;
+    if (repair?.repaired) projection = rebuildMetadata(paths);
+    if (!projection.ok) {
+      return [
+        "# Wiki Lint Report",
+        "",
+        repair?.repaired ? `Legacy pages repaired: ${repair.repaired}` : "",
+        repair?.manifestPath ? `Repair manifest: ${repair.manifestPath}` : "",
+        "Projection-blocking diagnostics:",
+        ...projection.diagnostics.map(
+          (diagnostic) => `- ${diagnostic.code}: ${diagnostic.path}: ${diagnostic.message}`,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n");
+    }
+  } else {
+    const vault = inspectVaultFormat(paths);
+    const audit = discoverKnowledgeDocuments(paths);
+    const diagnostics = [...vault.diagnostics, ...audit.diagnostics];
+    if (vault.blocking || audit.blocking) {
+      return [
+        "# Wiki Lint Report",
+        "",
+        "Projection-blocking diagnostics:",
+        ...diagnostics.map(
+          (diagnostic) => `- ${diagnostic.code}: ${diagnostic.path}: ${diagnostic.message}`,
+        ),
+      ].join("\n");
+    }
   }
 
   const discovery = discoverKnowledgeDocuments(paths);
@@ -925,10 +943,6 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     }
   }
 
-  writeJson(join(paths.discoveries, "gaps.json"), {
-    gaps,
-    generated: new Date().toISOString(),
-  });
   const reportLines = [
     "# Wiki Lint Report",
     `Generated: ${fmtDate()}`,
@@ -946,18 +960,24 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     findings.length ? findings.map((finding) => `- ${finding}`).join("\n") : "✅ No issues found!",
     "",
   ].filter(Boolean);
-  const reportPath = join(paths.outputs, `lint-${fmtDate()}.md`);
-  mkdirSync(paths.outputs, { recursive: true });
-  writeFileSync(reportPath, `${reportLines.join("\n")}\n`, "utf8");
-  appendEvent(paths, {
-    kind: "lint",
-    orphans,
-    missing_pages: missingPages,
-    contradictions,
-    auto_fix: autoFix,
-    legacy_pages_repaired: repair?.repaired ?? 0,
-  });
-  rebuildMetadataLight(paths);
+  const reportPath = autoFix ? join(paths.outputs, `lint-${fmtDate()}.md`) : undefined;
+  if (autoFix && reportPath) {
+    writeJson(join(paths.discoveries, "gaps.json"), {
+      gaps,
+      generated: new Date().toISOString(),
+    });
+    mkdirSync(paths.outputs, { recursive: true });
+    writeFileSync(reportPath, `${reportLines.join("\n")}\n`, "utf8");
+    appendEvent(paths, {
+      kind: "lint",
+      orphans,
+      missing_pages: missingPages,
+      contradictions,
+      auto_fix: true,
+      legacy_pages_repaired: repair?.repaired ?? 0,
+    });
+    rebuildMetadataLight(paths);
+  }
 
   return [
     "🧹 **LLM Wiki lint complete**",
@@ -969,7 +989,7 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     autoFix ? `- Missing-page fixes: ${fixesApplied}` : "",
     repair?.repaired ? `- Legacy pages repaired: ${repair.repaired}` : "",
     "",
-    `📄 Report: \`${reportPath}\``,
+    reportPath ? `📄 Report: \`${reportPath}\`` : "",
     repair?.manifestPath ? `🛟 Repair manifest: \`${repair.manifestPath}\`` : "",
     gaps.length ? `💡 ${gaps.length} knowledge gap(s) tracked` : "",
   ]

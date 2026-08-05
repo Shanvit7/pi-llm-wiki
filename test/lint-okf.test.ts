@@ -1,4 +1,16 @@
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, expect, it } from "vitest";
@@ -17,6 +29,26 @@ type TestTool = {
 };
 const root = join(import.meta.dirname, "..", "tmp", `lint-okf-${Date.now()}`);
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+function snapshotTree(path = root, base = root): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const result: Record<string, unknown> = {};
+  for (const entry of readdirSync(path, { withFileTypes: true })) {
+    const fullPath = join(path, entry.name);
+    const relativePath = fullPath.slice(base.length + 1).replace(/\\/g, "/");
+    const stat = lstatSync(fullPath);
+    result[relativePath] = {
+      kind: entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file",
+      mode: stat.mode,
+      mtimeMs: stat.mtimeMs,
+      hash: entry.isFile()
+        ? createHash("sha256").update(readFileSync(fullPath)).digest("hex")
+        : undefined,
+    };
+    if (entry.isDirectory()) Object.assign(result, snapshotTree(fullPath, base));
+  }
+  return result;
+}
 
 it("reports and auto-fixes one target referenced by Markdown and a legacy wikilink", async () => {
   const paths = getVaultPaths(root);
@@ -53,6 +85,29 @@ it("reports and auto-fixes one target referenced by Markdown and a legacy wikili
       mentionedBy: ["concepts/markdown-source", "concepts/wikilink-source"],
     },
   ]);
+});
+
+it("keeps a valid audit-only lint byte- and metadata-identical", async () => {
+  const paths = getVaultPaths(root);
+  ensureVaultStructure(paths);
+  writeFileSync(join(paths.dotWiki, "config.json"), JSON.stringify({ name: "Read only" }));
+  writeFileSync(join(paths.wiki, "concepts", "valid.md"), "---\ntype: concept\n---\n\nValid.\n");
+
+  let tool: TestTool | undefined;
+  registerWikiLint({
+    registerTool: (definition: unknown) => {
+      tool = definition as TestTool;
+    },
+  } as unknown as ExtensionAPI);
+  if (!tool) throw new Error("wiki_lint was not registered");
+  const before = snapshotTree();
+  const result = await tool.execute("test", { auto_fix: false }, undefined, undefined, {
+    cwd: root,
+    hasUI: false,
+  });
+
+  expect(result.content[0].text).not.toContain("Report:");
+  expect(snapshotTree()).toEqual(before);
 });
 
 it("backs up and repairs malformed legacy pages before rebuilding metadata", async () => {
@@ -98,6 +153,9 @@ it("backs up and repairs malformed legacy pages before rebuilding metadata", asy
     expect(readFileSync(join(paths.wiki, path), "utf8")).toBe(content);
   }
 
+  const modePath = join(paths.wiki, "analyses/plain.md");
+  chmodSync(modePath, 0o4750);
+  const originalTimes = statSync(modePath);
   const repaired = await tool.execute("test", { auto_fix: true }, undefined, undefined, {
     cwd: root,
     hasUI: false,
@@ -105,6 +163,9 @@ it("backs up and repairs malformed legacy pages before rebuilding metadata", asy
   expect(repaired.isError).not.toBe(true);
   expect(repaired.content[0].text).toContain("Legacy pages repaired: 3");
   expect(rebuildMetadata(paths).ok).toBe(true);
+  const repairedStat = statSync(modePath);
+  expect(repairedStat.mode & 0o7777).toBe(0o4750);
+  expect(Math.abs(repairedStat.mtimeMs - originalTimes.mtimeMs)).toBeLessThan(5);
 
   const backupName = readdirSync(paths.outputs).find((entry) => entry.startsWith("legacy-repair-"));
   expect(backupName).toBeDefined();
@@ -135,6 +196,42 @@ it("backs up and repairs malformed legacy pages before rebuilding metadata", asy
   }
 });
 
+it("preserves a concurrent save instead of replacing it", () => {
+  const paths = getVaultPaths(root);
+  ensureVaultStructure(paths);
+  writeFileSync(join(paths.dotWiki, "config.json"), JSON.stringify({ name: "Concurrent" }));
+  const page = join(paths.wiki, "concepts", "changing.md");
+  writeFileSync(page, "# Original malformed page\n");
+
+  expect(() =>
+    repairLegacyKnowledgeDocuments(paths, new Date("2026-08-05T00:00:00Z"), undefined, () => {
+      writeFileSync(page, "# Concurrent writer wins\n");
+    }),
+  ).toThrow("Legacy page changed during repair");
+  expect(readFileSync(page, "utf8")).toBe("# Concurrent writer wins\n");
+});
+
+it("refuses a symlinked page parent introduced before commit", () => {
+  const paths = getVaultPaths(root);
+  ensureVaultStructure(paths);
+  writeFileSync(join(paths.dotWiki, "config.json"), JSON.stringify({ name: "Symlink" }));
+  const folder = join(paths.wiki, "concepts");
+  const page = join(folder, "linked.md");
+  const original = "# Original malformed page\n";
+  writeFileSync(page, original);
+  const external = join(root, "external");
+
+  expect(() =>
+    repairLegacyKnowledgeDocuments(paths, new Date("2026-08-05T00:00:00Z"), undefined, () => {
+      rmSync(folder, { recursive: true });
+      mkdirSync(external);
+      writeFileSync(join(external, "linked.md"), original);
+      symlinkSync(external, folder, "dir");
+    }),
+  ).toThrow("refuses symlinked path");
+  expect(readFileSync(join(external, "linked.md"), "utf8")).toBe(original);
+});
+
 it("resumes a checkpointed legacy repair after interruption", () => {
   const paths = getVaultPaths(root);
   ensureVaultStructure(paths);
@@ -158,10 +255,16 @@ it("resumes a checkpointed legacy repair after interruption", () => {
     (JSON.parse(readFileSync(journalPath, "utf8")) as { completed: string[] }).completed,
   ).toHaveLength(1);
 
-  writeFileSync(
-    join(paths.dotWiki, ".legacy-repair.lock"),
-    JSON.stringify({ operation_id: "stale", pid: 999_999_999 }),
+  const lockPath = join(paths.dotWiki, ".legacy-repair.lock");
+  const takeoverPath = `${lockPath}.takeover`;
+  writeFileSync(lockPath, JSON.stringify({ operation_id: "stale", pid: 999_999_999 }));
+  writeFileSync(takeoverPath, "other takeover\n");
+  expect(() => repairLegacyKnowledgeDocuments(paths)).toThrow(
+    "Legacy repair lock takeover is already running",
   );
+  expect(readFileSync(lockPath, "utf8")).toContain('"operation_id":"stale"');
+  rmSync(takeoverPath);
+
   const resumed = repairLegacyKnowledgeDocuments(paths);
   expect(resumed.repaired).toBe(2);
   expect(existsSync(journalPath)).toBe(false);

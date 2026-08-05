@@ -98,9 +98,27 @@ function hashPath(path) {
   return hash.digest("hex");
 }
 
+function assertNoSymlinkAncestors(path, boundary) {
+  let current = resolve(path);
+  const root = resolve(boundary);
+  while (true) {
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Symlinked migration path requires manual migration: ${current}`);
+    }
+    if (current === root) return;
+    const parent = dirname(current);
+    if (parent === current) throw new Error(`Migration path escapes root: ${path}`);
+    current = parent;
+  }
+}
+
 function assertSameDevice(path, device) {
   const stat = lstatSync(path);
   if (stat.dev !== device) throw new Error(`Cross-device migration entry is unsupported: ${path}`);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Symlinked migration entries require manual migration: ${path}`);
+  }
   if (stat.isDirectory()) {
     for (const entry of readdirSync(path)) assertSameDevice(join(path, entry), device);
   }
@@ -131,12 +149,18 @@ function writeDurableFile(path, content, exclusive = false) {
 
 function writeJournal(path, journal, exclusive = false) {
   const content = `${JSON.stringify(journal, null, 2)}\n`;
+  const temporary = `${path}.${process.pid}-${randomUUID()}.tmp`;
+  writeDurableFile(temporary, content, true);
   if (exclusive) {
-    writeDurableFile(path, content, true);
+    try {
+      linkSync(temporary, path);
+      syncDirectory(dirname(path));
+    } finally {
+      if (existsSync(temporary)) unlinkSync(temporary);
+    }
+    syncDirectory(dirname(path));
     return;
   }
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeDurableFile(temporary, content, true);
   renameSync(temporary, path);
   syncDirectory(dirname(path));
 }
@@ -178,7 +202,55 @@ function moveNoClobber(item) {
   syncDirectory(dirname(item.src));
 }
 
+function moveTreeNoClobber(src, dest) {
+  const stat = lstatSync(src);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Symlinked doubled-layout entries require manual migration: ${src}`);
+  }
+  if (stat.isFile()) {
+    linkSync(src, dest);
+    syncDirectory(dirname(dest));
+    unlinkSync(src);
+    syncDirectory(dirname(src));
+    return;
+  }
+  if (!stat.isDirectory()) throw new Error(`Unsupported filesystem entry: ${src}`);
+
+  mkdirSync(dest);
+  syncDirectory(dirname(dest));
+  const completed = [];
+  try {
+    for (const entry of readdirSync(src).sort()) {
+      const child = { src: join(src, entry), dest: join(dest, entry) };
+      moveTreeNoClobber(child.src, child.dest);
+      completed.push(child);
+    }
+    rmdirSync(src);
+    syncDirectory(dirname(src));
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const child of completed.reverse()) {
+      try {
+        moveTreeNoClobber(child.dest, child.src);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError.message);
+      }
+    }
+    try {
+      rmdirSync(dest);
+      syncDirectory(dirname(dest));
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError.message);
+    }
+    const rollback = rollbackErrors.length ? ` Rollback errors: ${rollbackErrors.join("; ")}` : "";
+    throw new Error(`${error.message}.${rollback}`);
+  }
+}
+
 function restoreMove(item) {
+  if (hashPath(item.dest) !== item.digest) {
+    throw new Error(`Rollback destination changed: ${item.dest}`);
+  }
   mkdirSync(dirname(item.src), { recursive: true });
   if (item.type === "file") {
     linkSync(item.dest, item.src);
@@ -209,6 +281,9 @@ function completeOrResumeMove(item) {
       const source = statSync(item.src);
       const destination = statSync(item.dest);
       if (source.dev === destination.dev && source.ino === destination.ino) {
+        if (hashPath(item.dest) !== item.digest) {
+          throw new Error(`Moved destination changed: ${item.dest}`);
+        }
         unlinkSync(item.src);
         syncDirectory(dirname(item.src));
         return;
@@ -245,17 +320,23 @@ function executeMovePlan(
 ) {
   const moved = [];
   let ownsMarker = false;
+  let ownsRoot = false;
 
   try {
     if (resuming) {
       if (!existsSync(newRoot)) {
         mkdirSync(newRoot);
+        ownsRoot = true;
         syncDirectory(dirname(newRoot));
       }
       if (existsSync(ownerPath)) {
+        if (lstatSync(ownerPath).isSymbolicLink()) {
+          throw new Error(`Migration owner marker is symlinked: ${ownerPath}`);
+        }
         if (readFileSync(ownerPath, "utf8") !== `${journal.operation_id}\n`) {
           throw new Error(`Migration destination is owned by another operation: ${newRoot}`);
         }
+        ownsRoot = true;
       } else if (!journal.finalizing) {
         if (readdirSync(newRoot).length > 0) {
           throw new Error(`Migration owner marker is missing: ${ownerPath}`);
@@ -265,15 +346,15 @@ function executeMovePlan(
     } else {
       // Reserve the whole destination namespace atomically after preflight.
       mkdirSync(newRoot);
+      ownsRoot = true;
       syncDirectory(dirname(newRoot));
       writeDurableFile(ownerPath, `${journal.operation_id}\n`, true);
     }
     for (const item of plan) {
       log(`MOVE ${item.name}: ${item.src} → ${item.dest}`);
       const sourceExisted = existsSync(item.src);
-      if (sourceExisted) moved.push(item);
+      moved.push(item);
       completeOrResumeMove(item);
-      if (!sourceExisted) moved.push(item);
       if (!journal.completed.includes(item.name)) journal.completed.push(item.name);
       writeJournal(journalPath, journal);
       if (sourceExisted && process.env.LLM_WIKI_MIGRATION_PAUSE_AFTER === item.name) {
@@ -314,7 +395,8 @@ function executeMovePlan(
         rollbackErrors.push(`${item.name}: ${rollbackError.message}`);
       }
     }
-    if (rollbackErrors.length === 0) {
+    const rolledBack = plan.every((item) => existsSync(item.src) && !existsSync(item.dest));
+    if (rollbackErrors.length === 0 && rolledBack) {
       try {
         if (existsSync(ownerPath)) {
           const owner = readFileSync(ownerPath, "utf8");
@@ -322,14 +404,18 @@ function executeMovePlan(
         }
         if (existsSync(journalPath)) unlinkSync(journalPath);
         syncDirectory(dirname(journalPath));
+        if (ownsRoot) {
+          try {
+            rmdirSync(newRoot);
+          } catch {
+            // A non-empty directory is evidence preserved for manual recovery.
+          }
+        }
       } catch (journalError) {
         rollbackErrors.push(`journal cleanup: ${journalError.message}`);
       }
-    }
-    try {
-      rmdirSync(newRoot);
-    } catch {
-      // A non-empty directory is evidence preserved for manual recovery.
+    } else if (!rolledBack) {
+      rollbackErrors.push("rollback incomplete; migration journal retained");
     }
     const rollback = rollbackErrors.length
       ? ` Rollback errors: ${rollbackErrors.join("; ")}`
@@ -347,6 +433,13 @@ async function fixDoubled() {
   const outer = join(parentRoot, ".llm-wiki");
   const inner = join(outer, ".llm-wiki");
   const innerSentinel = join(inner, "config.json");
+
+  if (existsSync(outer) && lstatSync(outer).isSymbolicLink()) {
+    throw new Error(`Symlinked doubled-layout root requires manual migration: ${outer}`);
+  }
+  if (existsSync(inner) && lstatSync(inner).isSymbolicLink()) {
+    throw new Error(`Symlinked doubled-layout root requires manual migration: ${inner}`);
+  }
 
   console.log(`\n🔍 Scanning for doubled vault at: ${inner}\n`);
 
@@ -400,7 +493,15 @@ async function fixDoubled() {
       continue;
     }
     log(`MOVE ${p.entry}: ${p.src} → ${p.dest}`);
-    if (!DRY_RUN) renameSync(p.src, p.dest);
+    if (!DRY_RUN && process.env.LLM_WIKI_MIGRATION_PAUSE_BEFORE_DOUBLED === p.entry) {
+      await new Promise((resolve) =>
+        setTimeout(() => {
+          process.kill(process.pid, "SIGSTOP");
+          resolve();
+        }, 50),
+      );
+    }
+    if (!DRY_RUN) moveTreeNoClobber(p.src, p.dest);
     moved++;
   }
 
@@ -442,6 +543,12 @@ async function main() {
   const journalPath = join(root, ".wiki", JOURNAL_NAME);
   const ownerPath = join(newRoot, ".migration-owner");
   const resuming = existsSync(journalPath);
+  if (existsSync(join(root, ".wiki"))) {
+    assertNoSymlinkAncestors(join(root, ".wiki"), root);
+  }
+  if (existsSync(newRoot)) {
+    assertNoSymlinkAncestors(newRoot, root);
+  }
 
   // Full plan is deterministic so a journal never controls arbitrary paths.
   const moves = [

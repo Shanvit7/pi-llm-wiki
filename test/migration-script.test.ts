@@ -300,5 +300,5 @@ describe("migrate-llm-wiki CLI", () => {
     expect(packed.status, packed.stderr).toBe(0);
     const report = JSON.parse(packed.stdout) as Array<{ files: Array<{ path: string }> }>;
     expect(report[0].files.map((file) => file.path)).toContain("scripts/migrate-llm-wiki.js");
-  });
+  }, 30_000);
 });

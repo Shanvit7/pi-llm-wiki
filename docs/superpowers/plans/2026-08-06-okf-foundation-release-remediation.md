@@ -876,7 +876,8 @@ git commit -m "fix: stop emitting unresolved source page links"
 ### Task 4: Stabilize the MCP output-cap stress test without weakening coverage
 
 **Files:**
-- Modify: `test/mcp-exec.test.ts:101-112`
+- Modify: `test/mcp-exec.test.ts:45-112`
+- Modify: `test/migration-script.test.ts:295-304`
 
 - [ ] **Step 1: Keep the child alive until the cap fires and increase only this stress-case deadline**
 
@@ -902,7 +903,13 @@ it.each(["stdout", "stderr"] as const)(
 
 The interval prevents the fixture process from exiting merely because a five-second keepalive elapsed under load; the parent still kills it as soon as the production cap is reached, with a 15-second fallback timeout. Do not lower the 16 MiB payload and do not remove the exact UTF-8 byte assertion. The production cap remains unchanged.
 
-- [ ] **Step 2: Exercise the stress test repeatedly and under the full worker pool**
+- [ ] **Step 2: Remove the other load-sensitive process and package-test deadlines**
+
+Increase the descendant-process fixture command timeout in `test/mcp-exec.test.ts` from `100` to `1_000` milliseconds so Node can synchronously write `child.pid` before the process group is killed under parallel load. Keep the existing post-kill descendant assertion unchanged.
+
+Give the real `npm pack --dry-run` test in `test/migration-script.test.ts` an explicit `30_000` millisecond Vitest timeout. Keep the package-content assertion unchanged.
+
+- [ ] **Step 3: Exercise the stress tests repeatedly and under the full worker pool**
 
 Run:
 
@@ -915,13 +922,16 @@ pnpm test
 
 Expected: all three focused runs pass, followed by all 542+ repository tests under normal parallel execution.
 
-- [ ] **Step 3: Commit the test stabilization**
+- [ ] **Step 4: Commit the test stabilization**
 
 Run:
 
 ```bash
-git add test/mcp-exec.test.ts
-git commit -m "test: stabilize MCP output limit coverage"
+git add \
+  docs/superpowers/plans/2026-08-06-okf-foundation-release-remediation.md \
+  test/mcp-exec.test.ts \
+  test/migration-script.test.ts
+git commit -m "test: stabilize release gate process coverage"
 ```
 
 ---

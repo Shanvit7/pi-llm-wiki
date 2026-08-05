@@ -57,7 +57,7 @@ it("kills descendant processes when a command times out", async () => {
     "setTimeout(()=>{},5000)",
   ].join(";");
   const result = await createExecApi().exec(process.execPath, ["-e", script, marker], {
-    timeout: 100,
+    timeout: 1_000,
   });
   expect(result, JSON.stringify(result)).toMatchObject({ killed: true });
   const childPid = Number(readFileSync(marker, "utf8"));
@@ -103,12 +103,15 @@ it.each(["stdout", "stderr"] as const)(
   async (stream) => {
     const script =
       stream === "stdout"
-        ? "process.on('SIGTERM',()=>{});process.stdout.write('x'.repeat(16*1024*1024-1)+'€',()=>setTimeout(()=>process.stdout.write('A'),10));setTimeout(()=>{},5000)"
-        : "process.on('SIGTERM',()=>{});process.stderr.write('x'.repeat(16*1024*1024-1)+'€',()=>setTimeout(()=>process.stderr.write('A'),10));setTimeout(()=>{},5000)";
-    const result = await createExecApi().exec(process.execPath, ["-e", script], { timeout: 5_000 });
+        ? "process.on('SIGTERM',()=>{});process.stdout.write('x'.repeat(16*1024*1024-1)+'€',()=>setTimeout(()=>process.stdout.write('A'),10));setInterval(()=>{},1000)"
+        : "process.on('SIGTERM',()=>{});process.stderr.write('x'.repeat(16*1024*1024-1)+'€',()=>setTimeout(()=>process.stderr.write('A'),10));setInterval(()=>{},1000)";
+    const result = await createExecApi().exec(process.execPath, ["-e", script], {
+      timeout: 15_000,
+    });
     expect(result).toMatchObject({ killed: true, code: 1 });
     expect(Buffer.byteLength(result[stream])).toBe(16 * 1024 * 1024 - 1);
   },
+  20_000,
 );
 
 it("rejects failed commands and preserves local originals without shell copy", async () => {

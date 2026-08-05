@@ -25,9 +25,20 @@
  *   node scripts/migrate-llm-wiki.js --fix-doubled ~/  # …at a specific root
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+const {
+  closeSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  renameSync,
+  rmdirSync,
+  unlinkSync,
+  writeFileSync,
+} = require("node:fs");
+const { homedir } = require("node:os");
+const { dirname, join, resolve } = require("node:path");
 
 // ─── Helpers ────────────────────────────────────────────
 
@@ -35,38 +46,106 @@ const DRY_RUN = process.argv.includes("--dry-run");
 const FORCE = process.argv.includes("--force");
 const FIX_DOUBLED = process.argv.includes("--fix-doubled");
 
+function resolvePositionalRoot(defaultRoot) {
+  const positional = process.argv.slice(2).find((argument) => !argument.startsWith("--"));
+  return positional ? resolve(process.cwd(), positional) : defaultRoot;
+}
+
 function log(action, ...args) {
   const prefix = DRY_RUN ? "[DRY-RUN]" : "[MIGRATE]";
   console.log(`${prefix} ${action}`, ...args);
 }
 
-function moveDir(src, dest, name) {
-  if (!existsSync(src)) {
-    log(`SKIP ${name} — source does not exist: ${src}`);
+function moveNoClobber(item) {
+  mkdirSync(dirname(item.dest), { recursive: true });
+  if (item.type === "file") {
+    // Hard-link creation is atomic and fails with EEXIST instead of replacing a raced file.
+    linkSync(item.src, item.dest);
+    try {
+      unlinkSync(item.src);
+    } catch (error) {
+      unlinkSync(item.dest);
+      throw error;
+    }
     return;
   }
-  if (existsSync(dest)) {
-    log(`SKIP ${name} — destination already exists: ${dest}`);
+  if (existsSync(item.dest)) throw new Error(`Destination appeared: ${item.dest}`);
+  renameSync(item.src, item.dest);
+}
+
+function restoreMove(item) {
+  mkdirSync(dirname(item.src), { recursive: true });
+  if (item.type === "file") {
+    linkSync(item.dest, item.src);
+    unlinkSync(item.dest);
     return;
   }
-  log(`MOVE ${name}: ${src} → ${dest}`);
-  if (!DRY_RUN) {
-    mkdirSync(dest, { recursive: true });
-    renameSync(src, dest);
+  if (existsSync(item.src)) throw new Error(`Rollback source exists: ${item.src}`);
+  renameSync(item.dest, item.src);
+}
+
+function executeMovePlan(plan, newRoot, forwardingMarker, markerContent) {
+  const rootExisted = existsSync(newRoot);
+  const moved = [];
+  let markerHandle;
+  let ownsMarker = false;
+
+  try {
+    // Reserve the marker atomically before moving anything. A raced marker is never truncated.
+    markerHandle = openSync(forwardingMarker, "wx");
+    ownsMarker = true;
+    for (const item of plan) {
+      log(`MOVE ${item.name}: ${item.src} → ${item.dest}`);
+      moveNoClobber(item);
+      moved.push(item);
+    }
+    writeFileSync(markerHandle, markerContent, "utf8");
+    closeSync(markerHandle);
+    markerHandle = undefined;
+    log("CREATE forwarding marker: .wiki/MIGRATED_TO_LLM_WIKI.md");
+  } catch (error) {
+    const rollbackErrors = [];
+    if (markerHandle !== undefined) {
+      try {
+        closeSync(markerHandle);
+      } catch (closeError) {
+        rollbackErrors.push(`marker close: ${closeError.message}`);
+      }
+      markerHandle = undefined;
+    }
+    if (ownsMarker && existsSync(forwardingMarker)) {
+      try {
+        unlinkSync(forwardingMarker);
+      } catch (unlinkError) {
+        rollbackErrors.push(`marker cleanup: ${unlinkError.message}`);
+      }
+    }
+    for (const item of moved.reverse()) {
+      try {
+        if (existsSync(item.dest) && !existsSync(item.src)) restoreMove(item);
+      } catch (rollbackError) {
+        rollbackErrors.push(`${item.name}: ${rollbackError.message}`);
+      }
+    }
+    if (!rootExisted) {
+      try {
+        rmdirSync(newRoot);
+      } catch {
+        // A non-empty directory is evidence preserved for manual recovery.
+      }
+    }
+    const rollback = rollbackErrors.length
+      ? ` Rollback errors: ${rollbackErrors.join("; ")}`
+      : " All completed moves were rolled back.";
+    throw new Error(`Migration move failed: ${error.message}.${rollback}`);
   }
 }
 
 // ─── Main ───────────────────────────────────────────────
 
 async function fixDoubled() {
-  // Determine parent root: first positional arg if present, else homedir().
   // This is the directory that CONTAINS the outer .llm-wiki/.
-  const positional = process.argv.find((a, i) => i >= 2 && !a.startsWith("--"));
-  const parentRoot = positional
-    ? positional.startsWith("/")
-      ? positional
-      : join(process.cwd(), positional)
-    : homedir();
+  const parentRoot = resolvePositionalRoot(homedir());
 
   const outer = join(parentRoot, ".llm-wiki");
   const inner = join(outer, ".llm-wiki");
@@ -118,7 +197,7 @@ async function fixDoubled() {
   let moved = 0;
   let skipped = 0;
   for (const p of plan) {
-    if (p.collision) {
+    if (p.collision || existsSync(p.dest)) {
       log(`SKIP ${p.entry} — destination already exists`);
       skipped++;
       continue;
@@ -155,7 +234,7 @@ async function main() {
   }
 
   // Determine root directory
-  const root = process.argv[2] ? join(process.cwd(), process.argv[2]) : process.cwd();
+  const root = resolvePositionalRoot(process.cwd());
 
   console.log(`\n🔍 Scanning for legacy wiki at: ${root}\n`);
 
@@ -234,6 +313,26 @@ async function main() {
     schemas.push({ src: oldSchema, dest: join(root, ".llm-wiki", "WIKI_SCHEMA.md") });
   }
 
+  const newRoot = join(root, ".llm-wiki");
+  const forwardingMarker = join(root, ".wiki", "MIGRATED_TO_LLM_WIKI.md");
+  const movePlan = [
+    ...moves,
+    ...schemas.map((schema) => ({ ...schema, type: "file", name: "WIKI_SCHEMA" })),
+  ].filter((item) => existsSync(item.src));
+  const conflicts = [
+    ...movePlan.filter((item) => existsSync(item.dest)),
+    ...(existsSync(forwardingMarker)
+      ? [{ dest: forwardingMarker, name: "forwarding marker" }]
+      : []),
+  ];
+
+  if (conflicts.length > 0) {
+    console.log("\n❌ Migration blocked by destination conflicts:");
+    for (const conflict of conflicts) console.log(`   ${conflict.dest}`);
+    console.log("   No files were moved. Resolve these paths and rerun the migration.");
+    process.exit(1);
+  }
+
   // Print plan
   console.log("📋 Migration plan:");
   console.log("   Legacy format → New format");
@@ -274,45 +373,23 @@ async function main() {
     }
   }
 
+  const markerContent = [
+    "# Migration Complete",
+    "",
+    `This vault was migrated to the new layout at \`.llm-wiki/\` on ${new Date().toISOString().split("T")[0]}.`,
+    "",
+    "The old `.wiki/` directory is kept as a forwarding marker.",
+    "Remove it once you've verified everything works.",
+    "",
+    `New location: \`${newRoot}\``,
+    "",
+  ].join("\n");
+
   // Execute
   console.log("");
-  for (const m of moves) {
-    if (m.type === "dir") {
-      moveDir(m.src, m.dest, m.name);
-    } else {
-      moveDir(m.src, m.dest, m.name);
-    }
-  }
-
-  // Move WIKI_SCHEMA.md
-  for (const s of schemas) {
-    log(`MOVE WIKI_SCHEMA: ${s.src} → ${s.dest}`);
-    if (!DRY_RUN) {
-      mkdirSync(join(root, ".llm-wiki"), { recursive: true });
-      renameSync(s.src, s.dest);
-    }
-  }
-
-  // Create forwarding marker in old .wiki/
-  if (!DRY_RUN) {
-    const forwardingMarker = join(root, ".wiki", "MIGRATED_TO_LLM_WIKI.md");
-    const newRoot = join(root, ".llm-wiki");
-    writeFileSync(
-      forwardingMarker,
-      [
-        "# Migration Complete",
-        "",
-        `This vault was migrated to the new layout at \`.llm-wiki/\` on ${new Date().toISOString().split("T")[0]}.`,
-        "",
-        "The old `.wiki/` directory is kept as a forwarding marker.",
-        "Remove it once you've verified everything works.",
-        "",
-        `New location: \`${newRoot}\``,
-        "",
-      ].join("\n"),
-      "utf-8",
-    );
-    log("CREATE forwarding marker: .wiki/MIGRATED_TO_LLM_WIKI.md");
+  if (!DRY_RUN) executeMovePlan(movePlan, newRoot, forwardingMarker, markerContent);
+  else {
+    for (const item of movePlan) log(`MOVE ${item.name}: ${item.src} → ${item.dest}`);
   }
 
   console.log("");

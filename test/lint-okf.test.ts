@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import {
   chmodSync,
+  closeSync,
   existsSync,
-  lstatSync,
+  fstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -43,15 +45,21 @@ function snapshotTree(path = root, base = root): Record<string, unknown> {
   for (const entry of entries) {
     const fullPath = join(path, entry.name);
     const relativePath = fullPath.slice(base.length + 1).replace(/\\/g, "/");
-    const stat = lstatSync(fullPath);
-    result[relativePath] = {
+    const snapshot: Record<string, unknown> = {
       kind: entry.isDirectory() ? "directory" : entry.isSymbolicLink() ? "symlink" : "file",
-      mode: stat.mode,
-      mtimeMs: stat.mtimeMs,
-      hash: entry.isFile()
-        ? createHash("sha256").update(readFileSync(fullPath)).digest("hex")
-        : undefined,
     };
+    if (entry.isFile()) {
+      const handle = openSync(fullPath, "r");
+      try {
+        const stat = fstatSync(handle);
+        snapshot.mode = stat.mode;
+        snapshot.mtimeMs = stat.mtimeMs;
+        snapshot.hash = createHash("sha256").update(readFileSync(handle)).digest("hex");
+      } finally {
+        closeSync(handle);
+      }
+    }
+    result[relativePath] = snapshot;
     if (entry.isDirectory()) Object.assign(result, snapshotTree(fullPath, base));
   }
   return result;

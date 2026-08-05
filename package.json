@@ -37,6 +37,7 @@
     "extensions",
     "skills",
     "prompts",
+    "scripts/migrate-llm-wiki.js",
     "mcp",
     "dist",
     "docs",

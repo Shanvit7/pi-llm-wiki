@@ -63,7 +63,6 @@ export function registerWikiModelCommand(pi: ExtensionAPI, runtime: Runtime): vo
       const apply = (model: { provider: string; id: string } | undefined): void => {
         persistTaskModel(ctx.cwd, model);
         runtime.config = { ...runtime.config, taskModel: model };
-        runtime.configLoaded = true;
         const label = formatActiveModelLabel(runtime.config, sessionId);
         ctx.ui.setStatus(MODEL_STATUS_KEY, `🧠 wiki model: ${label}`);
         ctx.ui.notify(`LLM Wiki: background tasks now use ${label}`, "info");

@@ -142,7 +142,6 @@ describe("Runtime.resolveModel", () => {
   it("prefers the configured taskModel when found in the registry", async () => {
     const rt = new Runtime();
     rt.config = { taskModel: CONFIG_MODEL };
-    rt.configLoaded = true;
     const reg = makeRegistry({ found: CONFIG_MODEL, authOk: true });
     const res = await rt.resolveModel({ model: SESSION_MODEL, modelRegistry: reg, hasUI: false });
     expect(res.ok).toBe(true);
@@ -152,7 +151,6 @@ describe("Runtime.resolveModel", () => {
   it("falls back to the session model (and warns) when the configured model is not found", async () => {
     const rt = new Runtime();
     rt.config = { taskModel: CONFIG_MODEL };
-    rt.configLoaded = true;
     const reg = makeRegistry({ found: undefined, authOk: true });
     const { calls, ui } = makeNotifier();
     const res = await rt.resolveModel({

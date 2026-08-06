@@ -68,7 +68,7 @@ describe("runIngestSynthesis language injection", () => {
     expect(spy).toHaveBeenCalled();
     const callArgs = spy.mock.calls[0][0];
     expect(callArgs.systemPrompt).toContain("in ru");
-    expect(callArgs.systemPrompt).toContain("Preserve product names");
+    expect(callArgs.systemPrompt).toContain("Only preserve code");
 
     spy.mockRestore();
   });

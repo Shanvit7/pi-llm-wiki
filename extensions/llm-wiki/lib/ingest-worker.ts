@@ -391,7 +391,7 @@ export async function runIngestSynthesis(
   if (!content.trim()) return undefined;
 
   const languageInstruction = synthesisLanguage
-    ? `\n\nWrite all generated narrative content in ${synthesisLanguage}. Preserve product names, repository names, APIs, paths, commands, code, field names, and technical identifiers in their original form.`
+    ? `\n\nWrite all generated content in ${synthesisLanguage}, including titles, headings, summaries, descriptions, and concept/entity names. Only preserve code, API names, file paths, commands, and exact technical identifiers in their original form.`
     : "";
   const systemPrompt = INGEST_SYSTEM + languageInstruction;
 

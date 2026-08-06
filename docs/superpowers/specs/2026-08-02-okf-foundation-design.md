@@ -43,7 +43,7 @@ Those requirements belong to later child specs.
 2. **Mode controls bundle behavior, not readability.** Every mode reads both legacy and OKF-shaped pages. Mode controls reserved files and generated projections.
 3. **Missing metadata does not become invented metadata.** Foundation never fabricates authorship, verification, provenance, or timestamps it cannot know.
 4. **Unknown data survives rewrites.** Unknown ordinary YAML fields remain semantically equivalent after parse and serialize.
-5. **Generated files are projections.** Registry, backlinks, indexes, and logs derive from authoritative pages and events.
+5. **Generated files are projections; authoritative extension state is not.** Registry, backlinks, indexes, and logs derive from authoritative pages and events. `meta/events.jsonl` is extension-written state, but it is not generated metadata because no rebuild can reconstruct it.
 6. **Invalid explicit configuration fails closed.** Unknown mode and OKF version values never silently downgrade to legacy behavior.
 
 ## Vault Mode
@@ -350,6 +350,12 @@ An index is a projection. Users and importers cannot use it to hide a concept fr
 
 `meta/events.jsonl` remains the authoritative append-only event source in both modes. `wiki/log.md` is a generated OKF projection only in `okf-0.2` mode. Foundation generates no per-directory logs.
 
+`meta/events.jsonl` is durable extension-owned vault state. Users who need activity continuity must preserve it when backing up or synchronizing a complete pi-llm-wiki vault. It is not derivable from canonical pages, raw source packets, `meta/log.md`, or `wiki/log.md`.
+
+Foundation does not make the JSONL event source part of the distributable OKF bundle. `wiki/log.md` is a portable snapshot of recorded activity at projection time, not a recovery format and not a promise that an imported bundle can continue the originating vault's event stream. Import, export, and imported-history composition belong to the later Interchange child specification.
+
+The event stream records selected extension operations. It is not a complete revision history: manual file edits do not fabricate events, while extension-owned operational actions may emit events. Documentation and UI text must call it an activity history rather than a complete content audit trail.
+
 ### Authoritative event shape
 
 Each valid JSONL line must contain:
@@ -362,6 +368,8 @@ Each valid JSONL line must contain:
 ```
 
 Additional JSON-compatible fields are allowed. Event production is mode-independent: the same successful capture, creation, update, retro, observation, ingestion, and other tool-owned mutations append the same event in legacy and OKF modes. Event writers append only after the associated authoritative wiki mutation succeeds. A projection rebuild itself does not append an event. Manual file edits do not fabricate events because the extension cannot infer actor or intent safely.
+
+Fields projected into `wiki/log.md` must be safe for a distributable bundle. A local file capture event records its stable `source_id` and format but not the caller-supplied `file_path`; the exact path remains in the extension-owned raw source manifest. Manual event details are user-controlled and documentation must warn callers not to include secrets or machine-local paths intended to remain private.
 
 ### Log template
 
@@ -398,7 +406,14 @@ If any concept has malformed frontmatter, normalized identity collision, or unsu
 - preserve the previous registry, backlinks, indexes, and logs
 - do not publish a partial metadata generation
 
-Unresolved links and malformed event lines are non-blocking projection diagnostics: valid concepts may still be indexed, and the previous semantics for reporting gaps remain available. The rebuild result reports every diagnostic.
+Unresolved links and malformed event lines are non-blocking projection diagnostics: valid concepts may still be indexed, and valid event lines may still be projected. A missing or unreadable `meta/events.jsonl` is different from a present empty stream. Rebuild reports `event_source_missing` or `event_source_unreadable`, continues publishing registry, backlink, and index projections, and leaves existing `meta/log.md` and `wiki/log.md` byte-identical. A present zero-byte event file is an explicitly empty authoritative stream and generates the normal empty log projections.
+
+Non-blocking diagnostics include:
+
+- `link_unresolved`
+- `event_invalid_json`
+- `event_source_missing`
+- `event_source_unreadable`
 
 On successful rebuild:
 

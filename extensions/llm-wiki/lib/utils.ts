@@ -397,6 +397,13 @@ export function isProtectedPath(
         reason: "Raw sources are immutable. Use wiki_capture_source to add sources.",
       };
     }
+    if (relativePhysicalPath(paths.meta, absPath) === "events.jsonl") {
+      return {
+        protected: true,
+        reason:
+          "Event history is append-only authoritative state. Use wiki_log_event or an owning wiki operation instead.",
+      };
+    }
     if (isPathWithin(paths.meta, absPath)) {
       return {
         protected: true,

@@ -98,15 +98,16 @@ describe("E2E — Guardrails: isProtectedPath blocks raw/** and meta/**", () => 
     console.log("✅ meta/backlinks.json write blocked\n");
   });
 
-  it("blocks a write to meta/events.jsonl", () => {
+  it("blocks direct writes to authoritative event history", () => {
     const paths = makePaths();
     const target = join(paths.meta, "events.jsonl");
 
     const result = isProtectedPath(target, paths);
 
     expect(result.protected).toBe(true);
-    expect(result.reason).toContain("Metadata is auto-generated");
-    console.log("✅ meta/events.jsonl write blocked\n");
+    expect(result.reason).toContain("append-only authoritative state");
+    expect(result.reason).toContain("wiki_log_event");
+    expect(result.reason).not.toContain("auto-generated");
   });
 
   it("ALLOWS a write to wiki/concepts/retrieval-augmented-generation.md", () => {

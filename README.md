@@ -271,10 +271,18 @@ my-wiki/
 | `.llm-wiki/meta/registry.json` | Extension | Generated |
 | `.llm-wiki/meta/backlinks.json` | Extension | Generated |
 | `.llm-wiki/meta/index.md` | Extension | Generated |
-| `.llm-wiki/meta/events.jsonl` | Extension / tool | Append-only |
+| `.llm-wiki/meta/events.jsonl` | Extension / tool | Authoritative append-only state; back up for activity continuity |
 | `.llm-wiki/meta/log.md` | Extension | Generated from events |
 | `.llm-wiki/meta/lint-report.md` | Extension | Generated |
 | `.llm-wiki/WIKI_SCHEMA.md` | Human + explicit request | Operating manual |
+
+### Activity history, backup, and portability
+
+`meta/events.jsonl` is the authoritative source for recorded extension activity. Unlike registry, backlinks, indexes, logs, and embeddings, it cannot be rebuilt from wiki pages or raw packets. Preserve it when backing up or Git-synchronizing a complete pi-llm-wiki vault.
+
+`meta/log.md` and OKF-mode `wiki/log.md` are generated views. `wiki/log.md` can travel with the OKF bundle as a readable snapshot, but it cannot reconstruct or resume the originating JSONL stream. Manual page edits are intentionally absent, so this is selected extension activity rather than a complete revision audit.
+
+File-capture events omit machine-local paths from the public log projection. Callers of `wiki_log_event` still control arbitrary detail fields and must not record secrets or private host paths.
 
 ---
 
@@ -385,7 +393,7 @@ Each wiki vault has four layers with clear ownership:
 ```
 .llm-wiki/raw/sources/SRC-*/     # Immutable source packets (extension-owned)
 .llm-wiki/wiki/                   # Editable knowledge pages (you + LLM)
-.llm-wiki/meta/                   # Auto-generated registry, backlinks, index, log
+.llm-wiki/meta/                   # Durable event source + generated internal projections
 .llm-wiki/                        # Config and templates
 ```
 

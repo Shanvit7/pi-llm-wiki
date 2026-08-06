@@ -364,10 +364,7 @@ type EventSourceRead =
   | { available: true; content: string }
   | { available: false; diagnostic: KnowledgeDiagnostic };
 
-function readEventSource(
-  filePath: string,
-  diagnosticPath = "meta/events.jsonl",
-): EventSourceRead {
+function readEventSource(filePath: string, diagnosticPath = "meta/events.jsonl"): EventSourceRead {
   if (!existsSync(filePath)) {
     return {
       available: false,

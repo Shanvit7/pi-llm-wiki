@@ -528,9 +528,7 @@ describe("OKF rebuild integration", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
       "event_source_missing",
     );
-    expect(readFileSync(join(paths.meta, "log.md"), "utf8")).toContain(
-      "_No events recorded yet._",
-    );
+    expect(readFileSync(join(paths.meta, "log.md"), "utf8")).toContain("_No events recorded yet._");
     expect(readFileSync(join(paths.wiki, "log.md"), "utf8")).toBe("# Wiki Update Log\n");
   });
 });

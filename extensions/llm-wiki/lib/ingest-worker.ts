@@ -363,6 +363,8 @@ export interface RunIngestSynthesisArgs {
   /** Cap on extracted chars fed to the model (avoid huge prompts). Default 24k. */
   maxChars?: number;
   signal?: AbortSignal;
+  /** BCP 47 language tag for narrative content (issue #124). */
+  synthesisLanguage?: string;
 }
 
 /**
@@ -373,9 +375,25 @@ export interface RunIngestSynthesisArgs {
 export async function runIngestSynthesis(
   args: RunIngestSynthesisArgs,
 ): Promise<CommitResult | undefined> {
-  const { model, apiKey, headers, paths, sourceId, manifest, extracted, maxChars, signal } = args;
+  const {
+    model,
+    apiKey,
+    headers,
+    paths,
+    sourceId,
+    manifest,
+    extracted,
+    maxChars,
+    signal,
+    synthesisLanguage,
+  } = args;
   const content = extracted.slice(0, maxChars ?? 24_000);
   if (!content.trim()) return undefined;
+
+  const languageInstruction = synthesisLanguage
+    ? `\n\nWrite all generated narrative content in ${synthesisLanguage}. Preserve product names, repository names, APIs, paths, commands, code, field names, and technical identifiers in their original form.`
+    : "";
+  const systemPrompt = INGEST_SYSTEM + languageInstruction;
 
   let committed: CommitResult | undefined;
 
@@ -411,7 +429,7 @@ export async function runIngestSynthesis(
     model,
     apiKey,
     headers,
-    systemPrompt: INGEST_SYSTEM,
+    systemPrompt,
     userPrompt,
     tools: [commitTool as AgentTool],
     signal,

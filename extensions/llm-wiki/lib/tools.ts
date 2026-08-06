@@ -414,6 +414,7 @@ export function registerWikiIngest(pi: ExtensionAPI, runtime?: Runtime): void {
                 sourceId: s.id,
                 manifest: s.manifest,
                 extracted: s.extracted,
+                synthesisLanguage: runtime.config.synthesisLanguage,
               });
               if (committed) {
                 // Background semantic embeddings (#66): embed the pages this

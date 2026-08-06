@@ -100,6 +100,14 @@ export interface TaskConfig {
    * they cost nothing in the system prompt for the ~95% who don't use them.
    */
   trajectories?: boolean;
+
+  /**
+   * Language for background ingest synthesis narrative content (issue #124).
+   * BCP 47 language tag (e.g. "ru", "fr"). When unset, synthesis defaults to
+   * English. Applies to titles, summaries, takeaways, descriptions, etc.; raw
+   * source content and technical identifiers remain unchanged.
+   */
+  synthesisLanguage?: string;
 }
 
 export const TASK_DEFAULTS: TaskConfig = {};
@@ -175,6 +183,10 @@ function readNamespacedConfig(path: string): Partial<TaskConfig> {
     if (typeof section.trajectories === "boolean") {
       out.trajectories = section.trajectories;
     }
+
+    const lang = section.synthesisLanguage;
+    if (typeof lang === "string" && lang.trim()) out.synthesisLanguage = lang.trim();
+
     return out;
   } catch {
     return {};

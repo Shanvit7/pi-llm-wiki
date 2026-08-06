@@ -298,7 +298,7 @@ details: { pageCount: number }
 
 Append a structured event to the authoritative, append-only `meta/events.jsonl` stream and regenerate available log projections. Every event is timestamped automatically. The event stream must be preserved in full-vault backups; generated Markdown logs cannot reconstruct it.
 
-`details` is user-controlled and may appear in OKF-mode `wiki/log.md`. Do not include secrets, credentials, or private machine-local paths. Built-in local-file capture records its stable source ID and format in events while retaining the exact input path only in the extension-owned raw manifest.
+`details` is user-controlled and may appear in OKF-mode `wiki/log.md`. Do not include secrets, credentials, or private machine-local paths. Built-in local-file capture records its stable source ID and format in events, omitting the caller-supplied input path from the event stream and generated log projections. The exact path remains in the extension-owned raw manifest. Other wiki projections are not covered by this guarantee: extraction-failure text and source-page titles may still surface path-derived strings, so treat the source page area as potentially machine-local until a dedicated sanitization pass exists.
 
 **Parameters**
 

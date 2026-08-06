@@ -7,6 +7,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -365,29 +366,21 @@ type EventSourceRead =
   | { available: false; diagnostic: KnowledgeDiagnostic };
 
 function readEventSource(filePath: string, diagnosticPath = "meta/events.jsonl"): EventSourceRead {
-  if (!existsSync(filePath)) {
-    return {
-      available: false,
-      diagnostic: okfDiag(
-        "warning",
-        "event_source_missing",
-        diagnosticPath,
-        "Authoritative event source is missing; existing log projections were preserved",
-      ),
-    };
-  }
-
   try {
+    if (!statSync(filePath).isFile()) {
+      throw new Error("event source is not a regular file");
+    }
     return { available: true, content: readFileSync(filePath, "utf8") };
-  } catch {
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const diagnosticCode = code === "ENOENT" ? "event_source_missing" : "event_source_unreadable";
+    const message =
+      diagnosticCode === "event_source_missing"
+        ? "Authoritative event source is missing; existing log projections were preserved"
+        : "Authoritative event source is unreadable; existing log projections were preserved";
     return {
       available: false,
-      diagnostic: okfDiag(
-        "warning",
-        "event_source_unreadable",
-        diagnosticPath,
-        "Authoritative event source is unreadable; existing log projections were preserved",
-      ),
+      diagnostic: okfDiag("warning", diagnosticCode, diagnosticPath, message),
     };
   }
 }

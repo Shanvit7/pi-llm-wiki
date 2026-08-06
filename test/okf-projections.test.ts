@@ -36,6 +36,7 @@ function createVault(config: Record<string, unknown>) {
   const paths = getVaultPaths(root);
   ensureVaultStructure(paths);
   writeFileSync(join(paths.dotWiki, "config.json"), `${JSON.stringify(config)}\n`);
+  writeFileSync(join(paths.meta, "events.jsonl"), "");
   return paths;
 }
 afterEach(() => {
@@ -224,7 +225,8 @@ describe("OKF rebuild integration", () => {
       });
       expect(result.isError).toBe(true);
     }
-    expect(existsSync(join(paths.meta, "events.jsonl"))).toBe(false);
+    // events.jsonl exists as empty (from createVault); verify no events were written
+    expect(readFileSync(join(paths.meta, "events.jsonl"), "utf8")).toBe("");
   });
 
   it("legacy mode builds only meta/ projections and leaves wiki/index.md and wiki/log.md unchanged", () => {
@@ -468,5 +470,67 @@ describe("OKF rebuild integration", () => {
       return results;
     }
     expect(findTmp(paths.dotWiki)).toEqual([]);
+  });
+
+  it("preserves existing logs and warns when the authoritative event source is missing", () => {
+    const paths = createVault({ knowledge_format: "okf-0.2" });
+    writeFileSync(
+      join(paths.meta, "events.jsonl"),
+      '{"timestamp":"2026-08-06T10:00:00.000Z","kind":"before-loss"}\n',
+    );
+    expect(rebuildMetadata(paths).ok).toBe(true);
+
+    const metaLog = readFileSync(join(paths.meta, "log.md"), "utf8");
+    const wikiLog = readFileSync(join(paths.wiki, "log.md"), "utf8");
+    rmSync(join(paths.meta, "events.jsonl"));
+
+    const result = rebuildMetadata(paths);
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "event_source_missing",
+    );
+    expect(readFileSync(join(paths.meta, "log.md"), "utf8")).toBe(metaLog);
+    expect(readFileSync(join(paths.wiki, "log.md"), "utf8")).toBe(wikiLog);
+    expect(existsSync(join(paths.meta, "registry.json"))).toBe(true);
+    expect(existsSync(join(paths.meta, "backlinks.json"))).toBe(true);
+  });
+
+  it("preserves existing logs and warns when the authoritative event source is unreadable", () => {
+    const paths = createVault({ knowledge_format: "okf-0.2" });
+    writeFileSync(
+      join(paths.meta, "events.jsonl"),
+      '{"timestamp":"2026-08-06T10:00:00.000Z","kind":"before-read-error"}\n',
+    );
+    expect(rebuildMetadata(paths).ok).toBe(true);
+
+    const metaLog = readFileSync(join(paths.meta, "log.md"), "utf8");
+    const wikiLog = readFileSync(join(paths.wiki, "log.md"), "utf8");
+    rmSync(join(paths.meta, "events.jsonl"));
+    mkdirSync(join(paths.meta, "events.jsonl"));
+
+    const result = rebuildMetadata(paths);
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "event_source_unreadable",
+    );
+    expect(readFileSync(join(paths.meta, "log.md"), "utf8")).toBe(metaLog);
+    expect(readFileSync(join(paths.wiki, "log.md"), "utf8")).toBe(wikiLog);
+  });
+
+  it("treats a present zero-byte event source as intentionally empty", () => {
+    const paths = createVault({ knowledge_format: "okf-0.2" });
+
+    const result = rebuildMetadata(paths);
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+      "event_source_missing",
+    );
+    expect(readFileSync(join(paths.meta, "log.md"), "utf8")).toContain(
+      "_No events recorded yet._",
+    );
+    expect(readFileSync(join(paths.wiki, "log.md"), "utf8")).toBe("# Wiki Update Log\n");
   });
 });

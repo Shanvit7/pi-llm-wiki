@@ -1112,6 +1112,14 @@ export function registerWikiRebuildMeta(pi: ExtensionAPI, runtime?: Runtime): vo
           if (!result.ok) {
             return `⚠️ LLM Wiki: rebuild had issues — ${result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("; ")}`;
           }
+          const warnings = result.diagnostics.filter(
+            (diagnostic) => diagnostic.severity === "warning",
+          );
+          if (warnings.length > 0) {
+            return `⚠️ LLM Wiki: metadata rebuilt with warnings — ${warnings
+              .map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`)
+              .join("; ")}`;
+          }
           const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
             version: "1.0",
             last_updated: "",

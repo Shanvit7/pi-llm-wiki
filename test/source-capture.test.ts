@@ -22,10 +22,10 @@ describe("source packet capture", () => {
     } catch {}
   });
 
-  function makePaths() {
+  function makePaths(config: Record<string, unknown> = { name: "Capture test" }) {
     const p = getVaultPaths(join(tmpDir, `wiki-${Math.random().toString(36).slice(2)}`));
     ensureVaultStructure(p);
-    writeFileSync(join(p.dotWiki, "config.json"), JSON.stringify({ name: "Capture test" }));
+    writeFileSync(join(p.dotWiki, "config.json"), JSON.stringify(config));
     return p;
   }
 
@@ -164,6 +164,25 @@ describe("source packet capture", () => {
     expect(extracted).toContain("Hello world.");
 
     expect(existsSync(join(result.packetPath, "original", "notes.md"))).toBe(true);
+  });
+
+  it("keeps a local capture path in the raw manifest but out of events and the OKF log", async () => {
+    const paths = makePaths({ name: "Portable log test", knowledge_format: "okf-0.2" });
+    const localPath = join(tmpDir, "private", "notes.md");
+    mkdirSync(join(localPath, ".."), { recursive: true });
+    writeFileSync(localPath, "# Private notes\n", "utf8");
+
+    const result = await captureFile(mockPi() as never, paths, localPath);
+    const manifest = JSON.parse(readFile(join(result.packetPath, "manifest.json")));
+    expect(manifest.file_path).toBe(localPath);
+
+    const eventStream = readFile(join(paths.meta, "events.jsonl"));
+    expect(eventStream).not.toContain(localPath);
+    expect(eventStream).toContain(`"source_id":"${result.sourceId}"`);
+    expect(eventStream).toContain('"format":"markdown"');
+
+    expect(rebuildMetadata(paths).ok).toBe(true);
+    expect(readFile(join(paths.wiki, "log.md"))).not.toContain(localPath);
   });
 
   it("should convert XML files to readable markdown in extracted.md", async () => {

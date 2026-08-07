@@ -100,6 +100,14 @@ export interface TaskConfig {
    * they cost nothing in the system prompt for the ~95% who don't use them.
    */
   trajectories?: boolean;
+
+  /**
+   * Language for background ingest synthesis narrative content (issue #124).
+   * BCP 47 language tag (e.g. "ru", "fr"). When unset, synthesis defaults to
+   * English. Applies to titles, summaries, takeaways, descriptions, etc.; raw
+   * source content and technical identifiers remain unchanged.
+   */
+  synthesisLanguage?: string;
 }
 
 export const TASK_DEFAULTS: TaskConfig = {};
@@ -175,6 +183,13 @@ function readNamespacedConfig(path: string): Partial<TaskConfig> {
     if (typeof section.trajectories === "boolean") {
       out.trajectories = section.trajectories;
     }
+
+    const lang = section.synthesisLanguage;
+    if (typeof lang === "string" && lang.trim()) {
+      const canonical = validateSynthesisLanguage(lang.trim());
+      if (canonical) out.synthesisLanguage = canonical;
+    }
+
     return out;
   } catch {
     return {};
@@ -196,6 +211,27 @@ export function parseModelRef(ref: string): { provider: string; id: string } | u
   const id = trimmed.slice(slash + 1).trim();
   if (!provider || !id) return undefined;
   return { provider, id };
+}
+
+/**
+ * Validate and canonicalize a BCP 47 language tag for synthesisLanguage (issue #124).
+ * Returns the canonical tag, or undefined if invalid or suspicious.
+ * Uses Intl.getCanonicalLocales for validation; rejects tags containing
+ * newlines, quotes, or other prompt-injection candidates.
+ */
+export function validateSynthesisLanguage(tag: string): string | undefined {
+  // Reject obvious injection attempts: newlines, quotes, braces, angle brackets
+  if (/\n|\r|"|'|<|>|{|}/.test(tag)) return undefined;
+  // Reject if it looks like an instruction (contains "write", "ignore", "translate", etc.)
+  const lower = tag.toLowerCase();
+  if (/\b(write|ignore|translate|system|prompt|instruction)\b/.test(lower)) return undefined;
+  // Basic BCP 47 pattern: language[-script][-region][-variant]*
+  // Must start with 2-3 letter language code
+  if (!/^[a-z]{2,3}(?:-[A-Za-z]{1,8})*$/.test(tag)) return undefined;
+
+  const canonical = Intl.getCanonicalLocales(tag);
+  if (canonical.length === 0) return undefined;
+  return canonical[0];
 }
 
 /**

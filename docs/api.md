@@ -280,6 +280,8 @@ Health is `"⚠️ Warning"` when orphan count exceeds 5, `"🔴 Empty"` when th
 Force a full synchronous rebuild of all generated metadata: `registry.json`, `backlinks.json`,
 `index.md`, `log.md`. Use when metadata appears out of sync with actual wiki files.
 
+If `meta/events.jsonl` is missing or unreadable, rebuild reports a warning and preserves existing log projections while continuing to rebuild registry, backlinks, and indexes. A present zero-byte event file is an intentional empty history.
+
 **Parameters**
 
 None.
@@ -294,8 +296,9 @@ details: { pageCount: number }
 
 ## wiki_log_event
 
-Append a structured event to `meta/events.jsonl` and regenerate `meta/log.md`. Every event is
-timestamped automatically.
+Append a structured event to the authoritative, append-only `meta/events.jsonl` stream and regenerate available log projections. Every event is timestamped automatically. The event stream must be preserved in full-vault backups; generated Markdown logs cannot reconstruct it.
+
+`details` is user-controlled and may appear in OKF-mode `wiki/log.md`. Do not include secrets, credentials, or private machine-local paths. Built-in local-file capture records its stable source ID and format in events, omitting the caller-supplied input path from the event stream and generated log projections. The exact path remains in the extension-owned raw manifest. Other wiki projections are not covered by this guarantee: extraction-failure text and source-page titles may still surface path-derived strings, so treat the source page area as potentially machine-local until a dedicated sanitization pass exists.
 
 **Parameters**
 

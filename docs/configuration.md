@@ -32,6 +32,31 @@ The personal vault lives at `~/.llm-wiki/` (or `$WIKI_HOME`) and is always avail
 | `WIKI_HOME`                   | `~/.llm-wiki` | Override the personal wiki vault location     |
 | `WIKI_MARKITDOWN_TIMEOUT_MS` | 180000      | Timeout (ms) for MarkItDown PDF/text extraction |
 
+## Pi Agent Settings
+
+Runtime settings for the wiki's background tasks live in `.pi/settings.json` under the `llm-wiki` namespace. These can be set globally (`~/.pi/agent/settings.json`) or per-project (`<cwd>/.pi/settings.json`).
+
+| Setting               | Default | Description                                                  |
+| --------------------- | ------- | ------------------------------------------------------------ |
+| `taskModel`           | —       | Model for background tasks (`{ provider: "openai", id: "gpt-4o" }`) |
+| `synthesisLanguage`   | —       | BCP 47 language tag for ingest synthesis (e.g. `"ru"`, `"fr"`). When unset, synthesis defaults to English. |
+| `trajectories`        | false   | Enable agent-trajectory working-memory                       |
+| `notices`             | true    | Show wiki activity notices in chat                           |
+
+Example:
+
+```json
+{
+  "llm-wiki": {
+    "synthesisLanguage": "ru",
+    "taskModel": {
+      "provider": "openai",
+      "id": "gpt-4o"
+    }
+  }
+}
+```
+
 ## Vault Resolution
 
 The vault root is resolved in this priority order:

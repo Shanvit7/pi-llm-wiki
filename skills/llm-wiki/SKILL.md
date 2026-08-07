@@ -32,7 +32,7 @@ WIKI_ROOT/
     │   ├── analyses/          # Durable query answers
     │   ├── cases/             # One specific past task per trajectory
     │   └── skills/            # Reusable patterns distilled from trajectories
-    ├── meta/                  # Auto-generated (extension-owned)
+    ├── meta/                  # Durable events + generated projections (extension-owned)
     │   ├── registry.json      # Master page catalog
     │   ├── backlinks.json     # Inbound link map
     │   ├── index.md           # Human-readable catalog
@@ -45,12 +45,14 @@ WIKI_ROOT/
 ## Golden Rules
 
 1. **RAW IS IMMUTABLE.** Never edit `raw/`. Use `wiki_capture_source` to add sources.
-2. **META IS AUTO-GENERATED.** Never edit `meta/`. The extension rebuilds it automatically.
+2. **META IS EXTENSION-OWNED.** Never edit `meta/` directly. `events.jsonl` is append-only authoritative activity state; other metadata files are generated projections.
 3. **YOU OWN THE WIKI.** Create, update, and cross-reference everything in `wiki/`.
 4. **ONE FILE PER THING.** Each entity, concept, source gets its own `.md` file.
 5. **CROSS-REFERENCE EVERYTHING.** Every page needs at least 2 links. Prefer standard Markdown: `[label](/folder/page.md)`. Legacy wikilinks `[[folder/page]]` remain readable.
 6. **CITE SOURCES.** Every claim links back to its raw source packet.
 7. **FLAG CONTRADICTIONS.** When sources disagree, document both sides.
+
+> Preserve `meta/events.jsonl` in full-vault backups. `meta/log.md` and `wiki/log.md` cannot reconstruct it. Do not place secrets or private machine paths in manual event details.
 
 ## Agent Working-Memory (Trajectories)
 

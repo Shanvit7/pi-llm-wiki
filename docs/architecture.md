@@ -55,7 +55,7 @@ WIKI_ROOT/
     │   ├── analyses/          # Durable query answers
     │   ├── cases/             # One specific past task per trajectory
     │   └── skills/            # Reusable patterns distilled from trajectories
-    ├── meta/                  # Auto-generated (extension-owned)
+    ├── meta/                  # Durable event source + generated internal projections
     │   ├── registry.json      # Master page catalog
     │   ├── backlinks.json     # Inbound link map
     │   ├── index.md           # Human-readable catalog
@@ -73,8 +73,11 @@ WIKI_ROOT/
 | --------------------- | ------------------------ | ------------------------ |
 | `.llm-wiki/raw/**`    | Extension                | Immutable after capture  |
 | `.llm-wiki/wiki/**`   | Model + user             | Editable knowledge pages |
-| `.llm-wiki/meta/**`   | Extension                | Auto-generated           |
+| `.llm-wiki/meta/events.jsonl` | Extension tools | Authoritative, append-only; preserve in full-vault backups |
+| `.llm-wiki/meta/**` except `events.jsonl` | Extension | Generated projections |
 | `.llm-wiki/` | Human + explicit request | Operating rules          |
+
+`events.jsonl` records selected extension operations, not every filesystem edit. `meta/log.md` and OKF-mode `wiki/log.md` are one-way projections; neither can recover the event stream.
 
 ## Source Packet Format
 

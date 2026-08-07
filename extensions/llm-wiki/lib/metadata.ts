@@ -89,14 +89,16 @@ export function rebuildMetadata(paths: VaultPaths): ProjectionResult {
   const knownIds = new Set(documents.map((d) => d.id));
   const backlinks = buildBacklinks(documents, knownIds, allDiagnostics);
 
-  const eventLogResult = buildOkfLog(readText(join(paths.meta, "events.jsonl")));
-  allDiagnostics.push(...eventLogResult.diagnostics);
+  const eventSource = readEventSource(join(paths.meta, "events.jsonl"));
+  const eventLogResult = eventSource.available ? buildOkfLog(eventSource.content) : undefined;
+  if (eventLogResult) allDiagnostics.push(...eventLogResult.diagnostics);
+  else if (!eventSource.available) allDiagnostics.push(eventSource.diagnostic);
 
   // Step 5: Build meta/index.md
   const metaIndex = buildIndexMarkdown(registry);
 
   // Step 6: Build meta/log.md (existing rich format)
-  const metaLog = buildLogMarkdown(paths);
+  const metaLog = eventSource.available ? buildLogMarkdown(eventSource.content) : undefined;
 
   // Step 7: Build OKF projections if in okf-0.2 mode
   const okfIndexes: Map<string, string> | null =
@@ -104,8 +106,8 @@ export function rebuildMetadata(paths: VaultPaths): ProjectionResult {
       ? buildDirectoryIndexes(documents, readJson(join(paths.dotWiki, "config.json"), {}))
       : null;
 
-  const okfLog: string | null =
-    vaultState.knowledgeFormat === "okf-0.2" ? eventLogResult.markdown : null;
+  const okfLog: string | undefined =
+    vaultState.knowledgeFormat === "okf-0.2" ? eventLogResult?.markdown : undefined;
 
   // Step 8: Atomic write all projections
   mkdirSync(paths.meta, { recursive: true });
@@ -116,7 +118,7 @@ export function rebuildMetadata(paths: VaultPaths): ProjectionResult {
   atomicWriteFile(join(paths.meta, "registry.json"), registryJson);
   atomicWriteFile(join(paths.meta, "backlinks.json"), backlinksJson);
   atomicWriteFile(join(paths.meta, "index.md"), metaIndex);
-  atomicWriteFile(join(paths.meta, "log.md"), metaLog);
+  if (metaLog !== undefined) atomicWriteFile(join(paths.meta, "log.md"), metaLog);
 
   // Step 9: Write OKF projections if applicable
   if (okfIndexes && okfIndexes.size > 0) {
@@ -128,7 +130,7 @@ export function rebuildMetadata(paths: VaultPaths): ProjectionResult {
     pruneObsoleteIndexes(paths, okfIndexes);
   }
 
-  if (okfLog !== null) {
+  if (okfLog !== undefined) {
     mkdirSync(paths.wiki, { recursive: true });
     atomicWriteFile(join(paths.wiki, "log.md"), okfLog);
   }
@@ -302,23 +304,19 @@ function buildIndexMarkdown(registry: Registry): string {
   return `${sections.join("\n")}\n`;
 }
 
-/** Build meta/log.md in existing rich format. */
-function buildLogMarkdown(paths: VaultPaths): string {
-  const eventsPath = join(paths.meta, "events.jsonl");
+function buildLogMarkdown(eventsJsonl: string): string {
   const events: WikiEvent[] = [];
+  const raw = eventsJsonl.trim();
 
-  if (existsSync(eventsPath)) {
-    const raw = readText(eventsPath).trim();
-    for (const line of raw.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const candidate: unknown = JSON.parse(line);
-        if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
-          events.push(candidate as WikiEvent);
-        }
-      } catch {
-        // skip malformed
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const candidate: unknown = JSON.parse(line);
+      if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+        events.push(candidate as WikiEvent);
       }
+    } catch {
+      // Keep backward-compatible rich-log behavior: malformed lines are omitted.
     }
   }
 
@@ -338,10 +336,7 @@ function buildLogMarkdown(paths: VaultPaths): string {
     lines.push("");
   }
 
-  if (events.length === 0) {
-    lines.push("_No events recorded yet._\n");
-  }
-
+  if (events.length === 0) lines.push("_No events recorded yet._\n");
   return `${lines.join("\n")}\n`;
 }
 
@@ -365,13 +360,25 @@ function atomicWriteFile(path: string, content: string): void {
   renameSync(temporary, path);
 }
 
-/** Read text file or return empty string. */
-function readText(path: string): string {
+type EventSourceRead =
+  | { available: true; content: string }
+  | { available: false; diagnostic: KnowledgeDiagnostic };
+
+function readEventSource(filePath: string, diagnosticPath = "meta/events.jsonl"): EventSourceRead {
   try {
-    if (!existsSync(path)) return "";
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
+    return { available: true, content: readFileSync(filePath, "utf8") };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // ENOENT = missing; ENOTDIR/EISDIR = not a regular file (FreeBSD dir hazard); else unreadable
+    const diagnosticCode = code === "ENOENT" ? "event_source_missing" : "event_source_unreadable";
+    const message =
+      diagnosticCode === "event_source_missing"
+        ? "Authoritative event source is missing; existing log projections were preserved"
+        : "Authoritative event source is unreadable; existing log projections were preserved";
+    return {
+      available: false,
+      diagnostic: okfDiag("warning", diagnosticCode, diagnosticPath, message),
+    };
   }
 }
 

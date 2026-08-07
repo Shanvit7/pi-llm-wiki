@@ -137,7 +137,6 @@ describe("Runtime.resolveModel with per-call override", () => {
   it("override wins over both configured taskModel and session model", async () => {
     const rt = new Runtime();
     rt.config = { taskModel: CONFIG_MODEL };
-    rt.configLoaded = true;
     const reg = makeRegistry([CONFIG_MODEL, OVERRIDE_MODEL]);
     const res = await rt.resolveModel(
       { model: SESSION_MODEL, modelRegistry: reg, hasUI: false },
@@ -150,7 +149,6 @@ describe("Runtime.resolveModel with per-call override", () => {
   it("falls back to configured taskModel when the override is not in the registry (and warns)", async () => {
     const rt = new Runtime();
     rt.config = { taskModel: CONFIG_MODEL };
-    rt.configLoaded = true;
     const reg = makeRegistry([CONFIG_MODEL]); // OVERRIDE not known
     const { calls, ui } = makeNotifier();
     const res = await rt.resolveModel(

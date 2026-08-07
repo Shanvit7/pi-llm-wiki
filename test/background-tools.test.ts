@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -50,6 +50,7 @@ describe("wiki_rebuild_meta background + report (issue #77)", () => {
       join(paths.dotWiki, "config.json"),
       JSON.stringify({ topic: "T", mode: "personal" }),
     );
+    writeFileSync(join(paths.meta, "events.jsonl"), "");
     writeFileSync(
       join(paths.wiki, "concepts", "alpha.md"),
       "---\ntype: concept\n---\n\n# Alpha\n\nSome content.\n",
@@ -96,5 +97,21 @@ describe("wiki_rebuild_meta background + report (issue #77)", () => {
     } as unknown);
     expect(res.details.background).toBe(false);
     expect(res.content[0].text).toContain("metadata rebuilt");
+  });
+
+  it("reports a missing authoritative event source without failing unrelated projections", async () => {
+    const paths = getVaultPaths(wikiDir);
+    rmSync(join(paths.meta, "events.jsonl"));
+    const tool = captureRebuildTool();
+
+    const res = await tool.execute("id", {}, undefined, undefined, {
+      cwd: wikiDir,
+      hasUI: false,
+    } as unknown);
+
+    expect(res.details.background).toBe(false);
+    expect(res.content[0].text).toContain("metadata rebuilt with warnings");
+    expect(res.content[0].text).toContain("event_source_missing");
+    expect(existsSync(join(paths.meta, "registry.json"))).toBe(true);
   });
 });

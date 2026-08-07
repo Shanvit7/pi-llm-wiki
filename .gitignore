@@ -7,3 +7,5 @@ outputs/
 .pi/
 coverage/
 dist/
+.llm-wiki/
+tmp/

@@ -19,6 +19,7 @@ function createVault(config: Record<string, unknown>) {
   const paths = getVaultPaths(root);
   ensureVaultStructure(paths);
   writeFileSync(join(paths.dotWiki, "config.json"), `${JSON.stringify(config)}\n`);
+  writeFileSync(join(paths.meta, "events.jsonl"), "");
   return paths;
 }
 afterEach(() => {

@@ -51,7 +51,6 @@ export interface LaunchCtx {
 
 export class Runtime {
   config: TaskConfig = { ...TASK_DEFAULTS };
-  configLoaded = false;
 
   /**
    * Extension API handle, attached at registration. Used by `report()` to emit
@@ -68,9 +67,7 @@ export class Runtime {
   resolveFailureNotified = false;
 
   ensureConfig(cwd: string): void {
-    if (this.configLoaded) return;
     this.config = loadTaskConfig(cwd);
-    this.configLoaded = true;
   }
 
   /** True if a task with this label is currently running. */

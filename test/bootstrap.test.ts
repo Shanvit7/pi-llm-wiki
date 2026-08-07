@@ -67,6 +67,13 @@ describe("bootstrap", () => {
     expect(config.knowledge_format).toBe("okf-0.2");
     expect(readFileSync(join(paths.wiki, "index.md"), "utf8")).toContain('okf_version: "0.2"');
     expect(readFileSync(join(paths.wiki, "log.md"), "utf8")).toContain("bootstrap");
+
+    const schema = readFileSync(join(paths.dotWiki, "WIKI_SCHEMA.md"), "utf8");
+    expect(schema).toContain(
+      "meta/events.jsonl | extension tools | append-only authoritative state",
+    );
+    expect(schema).toContain("meta/* except events.jsonl | extension | generated projections");
+    expect(schema).toContain("Back up `meta/events.jsonl` to preserve activity history");
   });
 
   it("blocks a damaged project vault instead of falling back to personal wiki", async () => {

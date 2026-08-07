@@ -147,7 +147,7 @@ function fileCaptureSource(pi: ExecApi, filePath: string, signal?: AbortSignal):
       file_path: filePath,
       format: extractor.format,
     }),
-    event: () => ({ file_path: filePath, format: extractor.format }),
+    event: () => ({ format: extractor.format }),
   };
 }
 

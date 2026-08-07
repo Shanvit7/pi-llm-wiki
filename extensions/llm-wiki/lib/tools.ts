@@ -414,6 +414,7 @@ export function registerWikiIngest(pi: ExtensionAPI, runtime?: Runtime): void {
                 sourceId: s.id,
                 manifest: s.manifest,
                 extracted: s.extracted,
+                synthesisLanguage: runtime.config.synthesisLanguage,
               });
               if (committed) {
                 // Background semantic embeddings (#66): embed the pages this
@@ -1111,6 +1112,14 @@ export function registerWikiRebuildMeta(pi: ExtensionAPI, runtime?: Runtime): vo
           // No rebuild_meta event — rebuild is a projection, not an authoritative mutation
           if (!result.ok) {
             return `⚠️ LLM Wiki: rebuild had issues — ${result.diagnostics.map((d) => `${d.code}: ${d.message}`).join("; ")}`;
+          }
+          const warnings = result.diagnostics.filter(
+            (diagnostic) => diagnostic.severity === "warning",
+          );
+          if (warnings.length > 0) {
+            return `⚠️ LLM Wiki: metadata rebuilt with warnings — ${warnings
+              .map((diagnostic) => `${diagnostic.code}: ${diagnostic.message}`)
+              .join("; ")}`;
           }
           const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
             version: "1.0",

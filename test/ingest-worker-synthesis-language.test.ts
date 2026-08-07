@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +44,6 @@ describe("runIngestSynthesis language injection", () => {
 
   it("appends language instruction when synthesisLanguage is set", async () => {
     const { runIngestSynthesis } = await import("../extensions/llm-wiki/lib/ingest-worker.js");
-    const { runSubAgent } = await import("../extensions/llm-wiki/lib/subagent.js");
 
     const spy = vi
       .spyOn(await import("../extensions/llm-wiki/lib/subagent.js"), "runSubAgent")

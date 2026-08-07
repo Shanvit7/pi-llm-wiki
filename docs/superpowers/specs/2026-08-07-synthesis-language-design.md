@@ -40,9 +40,11 @@ This matches the existing pattern used by `taskModel`, `trajectories`, `notices`
 
 When `synthesisLanguage` is configured, the background ingest worker appends a fixed instruction block to its system prompt (`INGEST_SYSTEM` in `ingest-worker.ts`):
 
-> Write all generated narrative content in {language}. Preserve product names, repository names, APIs, paths, commands, code, field names, and technical identifiers in their original form.
+> Write all generated content in {language}, including titles, headings, summaries, descriptions, and concept/entity names. Only preserve code, API names, file paths, commands, exact technical identifiers, and verbatim quotations in their original form.
 
-The BCP 47 tag is used directly (e.g., "in ru" → model interprets as Russian). No language-name resolution needed.
+The BCP 47 tag is validated using `Intl.getCanonicalLocales()` and canonicalized before use. Invalid or suspicious tags (containing newlines, quotes, or instruction-like words) are rejected.
+
+Additionally, the page renderer translates fixed headings (Summary, Key Takeaways, etc.) into the configured language for supported languages (Russian, French, German, Japanese). Unsupported languages fall back to English headings.
 
 ### Scope
 

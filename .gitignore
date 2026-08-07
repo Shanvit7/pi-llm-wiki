@@ -8,3 +8,4 @@ outputs/
 coverage/
 dist/
 .llm-wiki/
+tmp/

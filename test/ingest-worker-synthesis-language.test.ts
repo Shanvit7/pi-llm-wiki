@@ -2,6 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { INGEST_SYSTEM } from "../extensions/llm-wiki/lib/ingest-worker.js";
 import type { VaultPaths } from "../extensions/llm-wiki/lib/utils.js";
 
 // We test the language instruction is appended to the system prompt by
@@ -68,12 +69,13 @@ describe("runIngestSynthesis language injection", () => {
     expect(spy).toHaveBeenCalled();
     const callArgs = spy.mock.calls[0][0];
     expect(callArgs.systemPrompt).toContain("in ru");
-    expect(callArgs.systemPrompt).toContain("Only preserve code");
+    expect(callArgs.systemPrompt).toContain("concept/entity names");
+    expect(callArgs.systemPrompt).toContain("verbatim quotations");
 
     spy.mockRestore();
   });
 
-  it("does not append language instruction when synthesisLanguage is unset", async () => {
+  it("uses exact INGEST_SYSTEM when synthesisLanguage is unset", async () => {
     const { runIngestSynthesis } = await import("../extensions/llm-wiki/lib/ingest-worker.js");
 
     const spy = vi
@@ -97,8 +99,7 @@ describe("runIngestSynthesis language injection", () => {
 
     expect(spy).toHaveBeenCalled();
     const callArgs = spy.mock.calls[0][0];
-    expect(callArgs.systemPrompt).not.toContain("Write all generated narrative content in");
-    expect(callArgs.systemPrompt).not.toContain("Preserve product names");
+    expect(callArgs.systemPrompt).toBe(INGEST_SYSTEM);
 
     spy.mockRestore();
   });

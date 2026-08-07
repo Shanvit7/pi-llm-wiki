@@ -1,8 +1,9 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { Api, Model } from "@mariozechner/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Runtime } from "../extensions/llm-wiki/lib/runtime.js";
 import { runSubAgent } from "../extensions/llm-wiki/lib/subagent.js";
 import { loadTaskConfig } from "../extensions/llm-wiki/lib/task-config.js";
@@ -281,5 +282,41 @@ describe("runSubAgent", () => {
       tools: [tool],
     });
     expect(toolCalled).toBe(false);
+  });
+});
+
+describe("Runtime.ensureConfig reloads on each call", () => {
+  let testDir: string;
+
+  function writeSettings(obj: Record<string, unknown>) {
+    const path = join(testDir, ".pi", "settings.json");
+    writeFileSync(path, JSON.stringify(obj), "utf-8");
+  }
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `llm-wiki-runtime-test-${Date.now()}`);
+    mkdirSync(join(testDir, ".pi"), { recursive: true });
+    writeSettings({ "llm-wiki": { synthesisLanguage: "ru" } });
+  });
+
+  afterAll(() => {
+    try {
+      rmSync(testDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  it("reloads config when settings file changes between calls", () => {
+    const rt = new Runtime();
+    rt.ensureConfig(testDir);
+    expect(rt.config.synthesisLanguage).toBe("ru");
+
+    // Change settings
+    writeSettings({ "llm-wiki": { synthesisLanguage: "fr" } });
+
+    // ensureConfig should reload
+    rt.ensureConfig(testDir);
+    expect(rt.config.synthesisLanguage).toBe("fr");
   });
 });

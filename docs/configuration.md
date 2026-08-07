@@ -34,7 +34,7 @@ The personal vault lives at `~/.llm-wiki/` (or `$WIKI_HOME`) and is always avail
 
 ## Pi Agent Settings
 
-Runtime settings for the wiki's background tasks live in `.pi/settings.json` under the `llm-wiki` namespace. These can be set globally (`~/.pi/settings.json`) or per-project (`<cwd>/.pi/settings.json`).
+Runtime settings for the wiki's background tasks live in `.pi/settings.json` under the `llm-wiki` namespace. These can be set globally (`~/.pi/agent/settings.json`) or per-project (`<cwd>/.pi/settings.json`).
 
 | Setting               | Default | Description                                                  |
 | --------------------- | ------- | ------------------------------------------------------------ |

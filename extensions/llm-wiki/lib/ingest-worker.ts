@@ -92,13 +92,113 @@ export type CommitSynthesisOutcome =
 
 // ── deterministic persistence (no LLM) ────────────────────
 
-function buildEntityPageBody(title: string, description: string, sourceId: string): string {
+/** Localized headings for generated pages (issue #124). */
+const HEADINGS: Record<string, Record<string, string>> = {
+  ru: {
+    summary: "Резюме",
+    keyTakeaways: "Ключевые выводы",
+    entitiesMentioned: "Упомянутые сущности",
+    conceptsMentioned: "Упомянутые концепции",
+    notableQuotes: "Заметные цитаты",
+    contradictions: "Противоречия",
+    sourcePacket: "Пакет источника",
+    overview: "Обзор",
+    definition: "Определение",
+    noneRecorded: "[Не записано]",
+    none: "[Нет]",
+    id: "ID",
+    extracted: "Извлечено",
+    manifest: "Манифест",
+    contradiction: "⚠️ **Противоречие**",
+  },
+  fr: {
+    summary: "Résumé",
+    keyTakeaways: "Points clés",
+    entitiesMentioned: "Entités mentionnées",
+    conceptsMentioned: "Concepts mentionnés",
+    notableQuotes: "Citations notables",
+    contradictions: "Contradictions",
+    sourcePacket: "Paquet source",
+    overview: "Aperçu",
+    definition: "Définition",
+    noneRecorded: "[Aucun enregistré]",
+    none: "[Aucun]",
+    id: "ID",
+    extracted: "Extrait",
+    manifest: "Manifeste",
+    contradiction: "⚠️ **Contradiction**",
+  },
+  de: {
+    summary: "Zusammenfassung",
+    keyTakeaways: "Wichtige Erkenntnisse",
+    entitiesMentioned: "Erwähnte Entitäten",
+    conceptsMentioned: "Erwähnte Konzepte",
+    notableQuotes: "Bemerkenswerte Zitate",
+    contradictions: "Widersprüche",
+    sourcePacket: "Quellenpaket",
+    overview: "Übersicht",
+    definition: "Definition",
+    noneRecorded: "[Keine aufgezeichnet]",
+    none: "[Keine]",
+    id: "ID",
+    extracted: "Extrahiert",
+    manifest: "Manifest",
+    contradiction: "⚠️ **Widerspruch**",
+  },
+  ja: {
+    summary: "要約",
+    keyTakeaways: "主な要点",
+    entitiesMentioned: "言及されたエンティティ",
+    conceptsMentioned: "言及された概念",
+    notableQuotes: "注目すべき引用",
+    contradictions: "矛盾",
+    sourcePacket: "ソースパケット",
+    overview: "概要",
+    definition: "定義",
+    noneRecorded: "[記録なし]",
+    none: "[なし]",
+    id: "ID",
+    extracted: "抽出済み",
+    manifest: "マニフェスト",
+    contradiction: "⚠️ **矛盾**",
+  },
+};
+
+function getHeadings(lang?: string): Record<string, string> {
+  if (lang && HEADINGS[lang]) return HEADINGS[lang];
+  // English defaults
+  return {
+    summary: "Summary",
+    keyTakeaways: "Key Takeaways",
+    entitiesMentioned: "Entities Mentioned",
+    conceptsMentioned: "Concepts Mentioned",
+    notableQuotes: "Notable Quotes",
+    contradictions: "Contradictions",
+    sourcePacket: "Source Packet",
+    overview: "Overview",
+    definition: "Definition",
+    noneRecorded: "[None recorded]",
+    none: "[None]",
+    id: "ID",
+    extracted: "Extracted",
+    manifest: "Manifest",
+    contradiction: "⚠️ **Contradiction**",
+  };
+}
+
+function buildEntityPageBody(
+  title: string,
+  description: string,
+  sourceId: string,
+  lang?: string,
+): string {
   const desc = description.trim() || "One-line description.";
+  const h = getHeadings(lang);
   return `# ${title}
 
 ${desc}
 
-## Overview
+## ${h.overview}
 
 [Key facts]
 
@@ -107,13 +207,19 @@ ${desc}
 - [${sourceId}](/sources/${sourceId}.md)`;
 }
 
-function buildConceptPageBody(title: string, definition: string, sourceId: string): string {
+function buildConceptPageBody(
+  title: string,
+  definition: string,
+  sourceId: string,
+  lang?: string,
+): string {
   const def = definition.trim() || "One-line definition.";
+  const h = getHeadings(lang);
   return `# ${title}
 
 ${def}
 
-## Definition
+## ${h.definition}
 
 [Clear explanation]
 
@@ -127,60 +233,62 @@ export function buildIngestedSourcePageBody(
   manifest: Record<string, unknown>,
   data: SynthesisData,
   _date: string,
+  lang?: string,
 ): string {
   const id = String(manifest.id);
   const title = String(manifest.title || id);
   const url = manifest.url ? `\n> _Original: [${manifest.url}](${manifest.url})_` : "";
+  const h = getHeadings(lang);
 
   const takeaways =
     data.key_takeaways.length > 0
       ? data.key_takeaways.map((t) => `- ${t.trim()}`).join("\n")
-      : "- [None recorded]";
+      : `- ${h.noneRecorded}`;
   const entities =
     data.entities.length > 0
       ? data.entities.map((e) => `- [${e.title}](/entities/${slugify(e.title)}.md)`).join("\n")
-      : "- [None]";
+      : `- ${h.none}`;
   const concepts =
     data.concepts.length > 0
       ? data.concepts.map((c) => `- [${c.title}](/concepts/${slugify(c.title)}.md)`).join("\n")
-      : "- [None]";
+      : `- ${h.none}`;
   const quotes =
     data.quotes && data.quotes.length > 0
       ? data.quotes
           .map((q) => `> ${q.text.trim()}${q.attribution ? ` — ${q.attribution}` : ""}`)
           .join("\n\n")
-      : "> [None recorded]";
+      : `> ${h.noneRecorded}`;
   const contradictions =
     data.contradictions && data.contradictions.length > 0
-      ? `\n## Contradictions\n\n${data.contradictions.map((c) => `⚠️ **Contradiction**: ${c.trim()}`).join("\n")}\n`
+      ? `\n## ${h.contradictions}\n\n${data.contradictions.map((c) => `${h.contradiction}: ${c.trim()}`).join("\n")}\n`
       : "";
 
   return `# ${title}${url}
 
-## Summary
+## ${h.summary}
 
 ${data.summary.trim()}
 
-## Key Takeaways
+## ${h.keyTakeaways}
 
 ${takeaways}
 
-## Entities Mentioned
+## ${h.entitiesMentioned}
 
 ${entities}
 
-## Concepts Mentioned
+## ${h.conceptsMentioned}
 
 ${concepts}
 
-## Notable Quotes
+## ${h.notableQuotes}
 
 ${quotes}
-${contradictions}## Source Packet
+${contradictions}## ${h.sourcePacket}
 
-- **ID:** \`sources/${id}\`
-- **Extracted:** \`raw/sources/${id}/extracted.md\`
-- **Manifest:** \`raw/sources/${id}/manifest.json\`
+- **${h.id}:** \`sources/${id}\`
+- **${h.extracted}:** \`raw/sources/${id}/extracted.md\`
+- **${h.manifest}:** \`raw/sources/${id}/manifest.json\`
 `;
 }
 
@@ -189,12 +297,13 @@ export function buildIngestedSourcePage(
   manifest: Record<string, unknown>,
   data: SynthesisData,
   date: string,
+  lang?: string,
 ): string {
   const id = String(manifest.id);
   const title = String(manifest.title || id);
   const format = String(manifest.format || "unknown");
   const captured = String(manifest.captured || date);
-  const body = buildIngestedSourcePageBody(manifest, data, date);
+  const body = buildIngestedSourcePageBody(manifest, data, date, lang);
   const doc = createKnowledgeDocument(
     `sources/${id}.md`,
     {
@@ -223,6 +332,7 @@ export function commitSynthesis(
   manifest: Record<string, unknown>,
   data: SynthesisData,
   date: string = fmtDate(),
+  lang?: string,
 ): CommitSynthesisOutcome {
   const result: CommitResult = {
     sourceId,
@@ -250,7 +360,7 @@ export function commitSynthesis(
     if (!parsed.ok) return { ok: false, sourceId, diagnostics: parsed.diagnostics };
     sourceDocument = patchKnowledgeDocument(parsed.document, {
       fields: { status: "ingested", updated: date },
-      body: buildIngestedSourcePageBody(manifest, data, date),
+      body: buildIngestedSourcePageBody(manifest, data, date, lang),
     });
   } else {
     sourceDocument = createKnowledgeDocument(
@@ -265,7 +375,7 @@ export function commitSynthesis(
         status: "ingested",
         updated: date,
       },
-      buildIngestedSourcePageBody(manifest, data, date),
+      buildIngestedSourcePageBody(manifest, data, date, lang),
     );
   }
   mkdirSync(join(paths.wiki, "sources"), { recursive: true });
@@ -289,7 +399,7 @@ export function commitSynthesis(
           created: date,
           updated: date,
         },
-        buildEntityPageBody(e.title, e.description, sourceId),
+        buildEntityPageBody(e.title, e.description, sourceId, lang),
         [{ id: sourceId, resource: `/sources/${sourceId}.md` }],
       );
       writeKnowledgeDocumentFile(pagePath, entityDoc);
@@ -315,7 +425,7 @@ export function commitSynthesis(
           created: date,
           updated: date,
         },
-        buildConceptPageBody(c.title, c.definition, sourceId),
+        buildConceptPageBody(c.title, c.definition, sourceId, lang),
         [{ id: sourceId, resource: `/sources/${sourceId}.md` }],
       );
       writeKnowledgeDocumentFile(pagePath, conceptDoc);
@@ -391,7 +501,7 @@ export async function runIngestSynthesis(
   if (!content.trim()) return undefined;
 
   const languageInstruction = synthesisLanguage
-    ? `\n\nWrite all generated content in ${synthesisLanguage}, including titles, headings, summaries, descriptions, and concept/entity names. Only preserve code, API names, file paths, commands, and exact technical identifiers in their original form.`
+    ? `\n\nWrite all generated content in ${synthesisLanguage}, including titles, headings, summaries, descriptions, and concept/entity names. Only preserve code, API names, file paths, commands, exact technical identifiers, and verbatim quotations in their original form.`
     : "";
   const systemPrompt = INGEST_SYSTEM + languageInstruction;
 
@@ -404,7 +514,14 @@ export async function runIngestSynthesis(
       "Persist the structured synthesis of this source into wiki pages. Call exactly once.",
     parameters: CommitSynthesisSchema,
     execute: async (_id, params) => {
-      const outcome = commitSynthesis(paths, sourceId, manifest, params);
+      const outcome = commitSynthesis(
+        paths,
+        sourceId,
+        manifest,
+        params,
+        undefined,
+        synthesisLanguage,
+      );
       if (!outcome.ok) {
         return {
           content: [{ type: "text", text: `Failed: ${outcome.diagnostics[0].message}` }],

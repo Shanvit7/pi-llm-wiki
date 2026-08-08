@@ -821,7 +821,7 @@ export function registerWikiLint(pi: ExtensionAPI, runtime?: Runtime): void {
       return dispatchReported(runtime, ctx as ToolCtx, {
         label: `lint:${paths.root}`,
         started:
-          "\u{1F9F9} LLM Wiki: lint started in the background — the health report will be posted when it completes.",
+          "\u{1F9F9} LLM Wiki: lint started in the background — the health report will be posted with your next message.",
         work: async () => runWikiLint(paths, params.auto_fix === true),
       });
     },
@@ -962,11 +962,14 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     "",
   ].filter(Boolean);
   const reportPath = autoFix ? join(paths.outputs, `lint-${fmtDate()}.md`) : undefined;
+  // The gap snapshot is generated discovery metadata consumed by wiki_status:
+  // persist it on every successful lint so status never reports a stale count.
+  // Corrective actions below (report, event, meta rebuild) stay autoFix-only.
+  writeJson(join(paths.discoveries, "gaps.json"), {
+    gaps,
+    generated: new Date().toISOString(),
+  });
   if (autoFix && reportPath) {
-    writeJson(join(paths.discoveries, "gaps.json"), {
-      gaps,
-      generated: new Date().toISOString(),
-    });
     mkdirSync(paths.outputs, { recursive: true });
     writeFileSync(reportPath, `${reportLines.join("\n")}\n`, "utf8");
     appendEvent(paths, {
@@ -1106,7 +1109,7 @@ export function registerWikiRebuildMeta(pi: ExtensionAPI, runtime?: Runtime): vo
       return dispatchReported(runtime, ctx as ToolCtx, {
         label: `rebuild_meta:${paths.root}`,
         started:
-          "\u{1F9E0} LLM Wiki: metadata rebuild started in the background — the result will be reported when it completes.",
+          "\u{1F9E0} LLM Wiki: metadata rebuild started in the background — the result will be reported with your next message.",
         work: async () => {
           const result = rebuildMetadata(paths);
           // No rebuild_meta event — rebuild is a projection, not an authoritative mutation
@@ -1187,7 +1190,7 @@ export function registerWikiReindexEmbeddings(pi: ExtensionAPI, runtime?: Runtim
       // report the stats on completion (issue #77).
       return dispatchReported(runtime, ctx as ToolCtx, {
         label: `reindex_embeddings:${paths.root}`,
-        started: `\u{1F9E0} LLM Wiki: embedding reindex started in the background (${embedder.model}) — stats will be reported when it completes.`,
+        started: `\u{1F9E0} LLM Wiki: embedding reindex started in the background (${embedder.model}) — stats will be reported with your next message.`,
         details: { enabled: true, model: embedder.model },
         work: async () => {
           const stats = await reindexEmbeddings(paths, embedder, { force: params.force === true });

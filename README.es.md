@@ -330,10 +330,11 @@ Esto preserva tanto el **artefacto original** como una **vista extraída normali
 
 Usa el wiki desde **cualquier herramienta compatible con MCP** — Claude Code, Cursor, Windsurf y otras.
 
-El paquete incluye un servidor MCP independiente que expone 5 herramientas de wiki por stdio:
+El paquete incluye un servidor MCP independiente que expone 6 herramientas de wiki por stdio:
 
 | Herramienta | Descripción |
 |-------------|-------------|
+| `wiki_bootstrap` | Inicializa un nuevo vault de wiki con configuración, plantillas, esquema y metadatos |
 | `wiki_recall` | Busca en el wiki páginas relevantes para la tarea |
 | `wiki_search` | Búsqueda completa del registro |
 | `wiki_status` | Estadísticas del wiki (conteos de páginas, desglose por tipo) |

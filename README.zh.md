@@ -330,10 +330,11 @@ my-wiki/
 
 从 **任何 MCP 兼容工具** 使用 wiki——Claude Code、Cursor、Windsurf 等。
 
-包附带独立 MCP 服务器，通过 stdio 暴露 5 个 wiki 工具：
+包附带独立 MCP 服务器，通过 stdio 暴露 6 个 wiki 工具：
 
 | 工具 | 描述 |
 |------|------|
+| `wiki_bootstrap` | 用配置、模板、模式和元数据初始化新的 wiki vault |
 | `wiki_recall` | 搜索 wiki 中与任务相关的页面 |
 | `wiki_search` | 完整注册表搜索 |
 | `wiki_status` | Wiki 统计（页面计数、类型分解） |

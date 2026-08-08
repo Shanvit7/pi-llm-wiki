@@ -213,8 +213,20 @@ export class Runtime {
    */
   launchReported(ctx: LaunchCtx, label: string, work: () => Promise<string | null>): Promise<void> {
     return this.launchTask(ctx, label, async () => {
+      // Capture synchronously — after `await work()` the extension ctx may be
+      // a stale proxy (newSession/fork/switchSession/reload) and accessing
+      // ctx.hasUI or ctx.ui on it throws (see launchTask).
+      const hasUI = ctx.hasUI;
+      const ui = ctx.ui;
       const summary = await work();
-      if (summary) this.report(summary);
+      if (summary) {
+        // Instant completion feedback: the nextTurn report below is queued for
+        // the next user prompt, so without a toast a background task looks
+        // stuck. Mirrors the failure notification in launchTask and the
+        // success toast already used by wiki_ingest.
+        if (hasUI && ui) ui.notify(summary.split("\n")[0].replace(/\*\*/g, ""), "info");
+        this.report(summary);
+      }
     });
   }
 

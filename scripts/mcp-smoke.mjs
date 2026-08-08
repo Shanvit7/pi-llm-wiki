@@ -17,6 +17,7 @@
 import { spawn } from "node:child_process";
 
 const REQUIRED_TOOLS = [
+  "wiki_bootstrap",
   "wiki_capture_source",
   "wiki_recall",
   "wiki_retro",

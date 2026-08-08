@@ -223,6 +223,10 @@ Deterministic health check of the wiki. Scans for orphan pages (no inbound links
 (linked but not created), and contradiction markers. Optionally auto-creates stub pages for
 knowledge gaps cited in two or more pages.
 
+Runs **asynchronously**: the tool acknowledges immediately and scans off-thread. On completion a
+UI toast fires instantly (when a UI is available) and the full health report is delivered with
+the next user message.
+
 **Parameters**
 
 | Name | Type | Required | Description |
@@ -277,8 +281,12 @@ Health is `"⚠️ Warning"` when orphan count exceeds 5, `"🔴 Empty"` when th
 
 ## wiki_rebuild_meta
 
-Force a full synchronous rebuild of all generated metadata: `registry.json`, `backlinks.json`,
+Force a full rebuild of all generated metadata: `registry.json`, `backlinks.json`,
 `index.md`, `log.md`. Use when metadata appears out of sync with actual wiki files.
+
+Runs **asynchronously**: the tool acknowledges immediately and rebuilds off-thread. On completion
+a UI toast fires instantly (when a UI is available) and the result is delivered with the next
+user message.
 
 If `meta/events.jsonl` is missing or unreadable, rebuild reports a warning and preserves existing log projections while continuing to rebuild registry, backlinks, and indexes. A present zero-byte event file is an intentional empty history.
 

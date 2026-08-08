@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+/* ── zosma.ai brand tokens — primary #017cf3, blue-tinted neutrals ── */
+
+:root {
+  --bg: oklch(98.5% 0.008 240);
+  --fg: oklch(12% 0.012 240);
+  --muted: oklch(95% 0.018 240);
+  --muted-fg: oklch(42% 0.014 240);
+  --line: oklch(88% 0.02 240);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.145 0.008 240);
+    --fg: oklch(0.985 0 0);
+    --muted: oklch(0.22 0.01 240);
+    --muted-fg: oklch(0.708 0 0);
+    --line: oklch(1 0 0 / 10%);
+  }
+}
+
+@theme inline {
+  --color-paper: var(--bg);
+  --color-ink: var(--fg);
+  --color-mist: var(--muted);
+  --color-mist-ink: var(--muted-fg);
+  --color-line: var(--line);
+  --color-primary: #017cf3;
+  --color-primary-deep: #005fbe;
+  --font-display: var(--font-chakra-petch), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── motion: one orchestrated entrance, transform/opacity only ── */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise {
+    animation: none;
+  }
+}

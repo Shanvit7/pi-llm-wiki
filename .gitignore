@@ -9,3 +9,6 @@ coverage/
 dist/
 .llm-wiki/
 tmp/
+apps/web/.next/
+apps/web/out/
+apps/web/next-env.d.ts

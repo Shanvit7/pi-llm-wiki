@@ -214,7 +214,14 @@ export class Runtime {
   launchReported(ctx: LaunchCtx, label: string, work: () => Promise<string | null>): Promise<void> {
     return this.launchTask(ctx, label, async () => {
       const summary = await work();
-      if (summary) this.report(summary);
+      if (summary) {
+        // Instant completion feedback: the nextTurn report below is queued for
+        // the next user prompt, so without a toast a background task looks
+        // stuck. Mirrors the failure notification in launchTask and the
+        // success toast already used by wiki_ingest.
+        if (ctx.hasUI && ctx.ui) ctx.ui.notify(summary.split("\n")[0].replace(/\*\*/g, ""), "info");
+        this.report(summary);
+      }
     });
   }
 

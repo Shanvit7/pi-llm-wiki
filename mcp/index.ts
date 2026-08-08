@@ -15,9 +15,10 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod/v4";
-import { resolveVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
+import { getVaultPaths, resolveVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
 import { createExecApi } from "./exec.js";
 import {
+  bootstrapOperation,
   captureSourceOperation,
   recallOperation,
   retroOperation,
@@ -35,6 +36,19 @@ function getPaths(): ReturnType<typeof resolveVaultPaths> {
   return resolveVaultPaths(root);
 }
 
+/**
+ * The vault root this server was configured with, without resolution.
+ *
+ * `getPaths()` RESOLVES an existing vault: on a root that has none it walks up
+ * to a parent vault and then falls back to the personal vault. That is right
+ * for reading and writing pages, and wrong for creating one — bootstrap must
+ * create the vault where the client pointed the server, not wherever
+ * resolution lands. The Pi tool draws the same distinction.
+ */
+function getConfiguredPaths(): ReturnType<typeof getVaultPaths> {
+  return getVaultPaths(process.env.WIKI_ROOT || process.cwd());
+}
+
 function hasVault(): boolean {
   const paths = getPaths();
   return existsSync(join(paths.dotWiki, "config.json"));
@@ -46,6 +60,55 @@ const server = new McpServer({
   name: "llm-wiki",
   version: "1.0.0",
 });
+
+// ---- wiki_bootstrap ----
+//
+// Registered first, and the only tool not gated on an existing vault: the
+// other five fail closed with a message naming this one, which an MCP-only
+// client could not act on while it was extension-only (issue #130).
+
+server.registerTool(
+  "wiki_bootstrap",
+  {
+    description:
+      "Create an LLM Wiki vault at this server's wiki root (WIKI_ROOT, or the working directory). Writes config, schema, templates and metadata scaffolding. Run this first when no vault exists; safe to re-run on an existing vault, where it updates the config and rebuilds metadata without touching pages.",
+    inputSchema: z.object({
+      topic: z.string().describe("Main topic of the wiki"),
+      mode: z.string().optional().describe("personal or company (default: personal)"),
+    }),
+  },
+  async ({ topic, mode }) => {
+    const paths = getConfiguredPaths();
+    const result = await bootstrapOperation(paths, { topic, mode });
+
+    if (!result.ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Vault error: ${result.diagnostics[0].message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const warnings = result.diagnostics.map((d) => `⚠️ ${d.code}: ${d.message}`);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: [
+            `${result.created ? "Wiki vault created" : "Wiki vault updated"} at ${paths.root}`,
+            "Structure: .llm-wiki/{raw,wiki,meta} plus config and WIKI_SCHEMA.md",
+            "Next: capture a source with wiki_capture_source, or save an insight with wiki_retro.",
+            ...warnings,
+          ].join("\n"),
+        },
+      ],
+    };
+  },
+);
 
 // ---- wiki_recall ----
 

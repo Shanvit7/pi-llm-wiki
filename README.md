@@ -342,10 +342,11 @@ This preserves both the **original artifact** and a **normalized extracted view*
 
 Use the wiki from **any MCP-compatible tool** — Claude Code, Cursor, Windsurf, and others.
 
-The package ships a standalone MCP server exposing 5 wiki tools over stdio:
+The package ships a standalone MCP server exposing 6 wiki tools over stdio:
 
 | Tool | Description |
 |------|-------------|
+| `wiki_bootstrap` | Initialize a new wiki vault with config, templates, schema, and metadata |
 | `wiki_recall` | Search wiki for task-relevant pages |
 | `wiki_search` | Full registry search |
 | `wiki_status` | Wiki stats (page counts, type breakdown) |

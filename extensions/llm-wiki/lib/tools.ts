@@ -962,11 +962,14 @@ function runWikiLint(paths: VaultPaths, autoFix: boolean): string {
     "",
   ].filter(Boolean);
   const reportPath = autoFix ? join(paths.outputs, `lint-${fmtDate()}.md`) : undefined;
+  // The gap snapshot is generated discovery metadata consumed by wiki_status:
+  // persist it on every successful lint so status never reports a stale count.
+  // Corrective actions below (report, event, meta rebuild) stay autoFix-only.
+  writeJson(join(paths.discoveries, "gaps.json"), {
+    gaps,
+    generated: new Date().toISOString(),
+  });
   if (autoFix && reportPath) {
-    writeJson(join(paths.discoveries, "gaps.json"), {
-      gaps,
-      generated: new Date().toISOString(),
-    });
     mkdirSync(paths.outputs, { recursive: true });
     writeFileSync(reportPath, `${reportLines.join("\n")}\n`, "utf8");
     appendEvent(paths, {

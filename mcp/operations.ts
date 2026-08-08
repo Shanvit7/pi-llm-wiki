@@ -9,7 +9,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { bootstrapVault } from "../extensions/llm-wiki/lib/bootstrap.js";
 import { type ProjectionResult, rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
-import { type RecallResult, searchWikiLayered } from "../extensions/llm-wiki/lib/recall.js";
+import { searchWiki } from "../extensions/llm-wiki/lib/recall.js";
 import { saveInsight } from "../extensions/llm-wiki/lib/retro.js";
 import { captureFile, captureText, captureUrl } from "../extensions/llm-wiki/lib/source-packet.js";
 import type { VaultPaths } from "../extensions/llm-wiki/lib/utils.js";
@@ -65,24 +65,16 @@ export async function bootstrapOperation(
   };
 }
 
-/**
- * Shared recall operation: layered search plus vault diagnostics.
- *
- * Layering is the shared contract, not an extension-only feature: MCP clients
- * get the same personal + project merge the Pi `wiki_recall` tool does.
- * `searchWikiLayered` appends personal-vault hits, deduplicates by page ID and
- * tags personal results with `vaultLabel`. It is a no-op when no personal vault
- * exists, or when the resolved vault IS the personal vault.
- */
+/** Shared recall operation: calls searchWiki and appends vault diagnostics. */
 export async function recallOperation(
   paths: VaultPaths,
   query: string,
   maxResults = 5,
 ): Promise<{
-  results: RecallResult[];
+  results: Array<{ id: string; title: string; type: string; preview?: string }>;
   diagnostics: Array<{ code: string; message: string }>;
 }> {
-  const results = searchWikiLayered(paths, query, maxResults);
+  const results = searchWiki(paths, query, maxResults);
   const vaultState = inspectVaultFormat(paths);
   return {
     results,

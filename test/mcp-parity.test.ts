@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bootstrapVault } from "../extensions/llm-wiki/lib/bootstrap.js";
 import { rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
-import { searchWikiLayered } from "../extensions/llm-wiki/lib/recall.js";
+import { searchWiki } from "../extensions/llm-wiki/lib/recall.js";
 import { saveInsight } from "../extensions/llm-wiki/lib/retro.js";
 import { captureText } from "../extensions/llm-wiki/lib/source-packet.js";
 import { ensureVaultStructure, getVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
@@ -73,7 +73,7 @@ describe("MCP parity with shared services", () => {
     );
   });
 
-  it("recall parity: MCP uses layered search matching shared searchWikiLayered with vault diagnostics", async () => {
+  it("recall parity: MCP matches shared searchWiki with vault diagnostics", async () => {
     mkdirSync(join(paths.wiki, "concepts"), { recursive: true });
     writeFileSync(
       join(paths.wiki, "concepts", "nested.md"),
@@ -81,7 +81,7 @@ describe("MCP parity with shared services", () => {
     );
     rebuildMetadata(paths);
 
-    const piRecall = searchWikiLayered(paths, "nested", 5);
+    const piRecall = searchWiki(paths, "nested", 5);
     const mcpRecall = await recallOperation(paths, "nested", 5);
 
     expect(mcpRecall.results).toEqual(piRecall);

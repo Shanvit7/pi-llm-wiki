@@ -20,7 +20,7 @@ import { afterEach, expect, it } from "vitest";
 import { parseKnowledgeDocument } from "../extensions/llm-wiki/lib/knowledge-document.js";
 import { repairLegacyKnowledgeDocuments } from "../extensions/llm-wiki/lib/legacy-repair.js";
 import { rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
-import { registerWikiLint } from "../extensions/llm-wiki/lib/tools.js";
+import { registerWikiLint, registerWikiStatus } from "../extensions/llm-wiki/lib/tools.js";
 import { ensureVaultStructure, getVaultPaths } from "../extensions/llm-wiki/lib/utils.js";
 
 type TestTool = {
@@ -102,7 +102,7 @@ it("reports and auto-fixes one target referenced by Markdown and a legacy wikili
   ]);
 });
 
-it("keeps a valid audit-only lint byte- and metadata-identical", async () => {
+it("keeps an audit-only lint read-only except the gap snapshot", async () => {
   const paths = getVaultPaths(root);
   ensureVaultStructure(paths);
   writeFileSync(join(paths.dotWiki, "config.json"), JSON.stringify({ name: "Read only" }));
@@ -122,7 +122,90 @@ it("keeps a valid audit-only lint byte- and metadata-identical", async () => {
   });
 
   expect(result.content[0].text).not.toContain("Report:");
-  expect(snapshotTree()).toEqual(before);
+  // The gap snapshot is generated discovery metadata (not vault content) and is
+  // refreshed on every lint — exclude it from the byte-identity check and
+  // assert it explicitly below.
+  const after = snapshotTree();
+  for (const key of Object.keys(after)) {
+    if (key.endsWith(".discoveries/gaps.json")) delete after[key];
+  }
+  expect(after).toEqual(before);
+  const snapshot = JSON.parse(readFileSync(join(paths.discoveries, "gaps.json"), "utf8"));
+  expect(snapshot.gaps).toEqual([]);
+  expect(typeof snapshot.generated).toBe("string");
+});
+
+it("refreshes a stale gap snapshot to empty on audit-only lint", async () => {
+  const paths = getVaultPaths(root);
+  ensureVaultStructure(paths);
+  writeFileSync(join(paths.dotWiki, "config.json"), JSON.stringify({ name: "Audit stale" }));
+  writeFileSync(join(paths.wiki, "concepts", "valid.md"), "---\ntype: concept\n---\n\nValid.\n");
+  // Seed the stale snapshot wiki_status would report before lint runs.
+  writeFileSync(
+    join(paths.discoveries, "gaps.json"),
+    JSON.stringify({
+      gaps: [{ topic: "concepts/obsolete", mentionedBy: ["concepts/old"] }],
+      generated: "2026-08-01T00:00:00.000Z",
+    }),
+  );
+
+  let lintTool: TestTool | undefined;
+  registerWikiLint({
+    registerTool: (definition: unknown) => {
+      lintTool = definition as TestTool;
+    },
+  } as unknown as ExtensionAPI);
+  if (!lintTool) throw new Error("wiki_lint was not registered");
+  const result = await lintTool.execute("test", { auto_fix: false }, undefined, undefined, {
+    cwd: root,
+    hasUI: false,
+  });
+
+  expect(result.isError).not.toBe(true);
+  const snapshot = JSON.parse(readFileSync(join(paths.discoveries, "gaps.json"), "utf8"));
+  expect(snapshot.gaps).toEqual([]);
+  expect(snapshot.generated).not.toBe("2026-08-01T00:00:00.000Z");
+
+  let statusTool: TestTool | undefined;
+  registerWikiStatus({
+    registerTool: (definition: unknown) => {
+      statusTool = definition as TestTool;
+    },
+  } as unknown as ExtensionAPI);
+  if (!statusTool) throw new Error("wiki_status was not registered");
+  const status = await statusTool.execute("test", {}, undefined, undefined, {
+    cwd: root,
+    hasUI: false,
+  });
+  expect(status.content[0].text).toContain("Gaps: 0");
+});
+
+it("persists non-empty gaps on audit-only lint", async () => {
+  const paths = getVaultPaths(root);
+  ensureVaultStructure(paths);
+  writeFileSync(join(paths.dotWiki, "config.json"), JSON.stringify({ name: "Audit gaps" }));
+  writeFileSync(
+    join(paths.wiki, "concepts", "source.md"),
+    "---\ntype: concept\n---\n\n[[concepts/missing]]\n",
+  );
+
+  let tool: TestTool | undefined;
+  registerWikiLint({
+    registerTool: (definition: unknown) => {
+      tool = definition as TestTool;
+    },
+  } as unknown as ExtensionAPI);
+  if (!tool) throw new Error("wiki_lint was not registered");
+  const result = await tool.execute("test", { auto_fix: false }, undefined, undefined, {
+    cwd: root,
+    hasUI: false,
+  });
+
+  expect(result.isError).not.toBe(true);
+  const snapshot = JSON.parse(readFileSync(join(paths.discoveries, "gaps.json"), "utf8"));
+  expect(snapshot.gaps).toEqual([{ topic: "concepts/missing", mentionedBy: ["concepts/source"] }]);
+  // Audit lint must not auto-create pages.
+  expect(existsSync(join(paths.wiki, "concepts", "missing.md"))).toBe(false);
 });
 
 it("backs up and repairs malformed legacy pages before rebuilding metadata", async () => {

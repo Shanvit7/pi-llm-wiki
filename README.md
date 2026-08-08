@@ -496,13 +496,6 @@ Thanks to everyone who has contributed! This list is regenerated automatically b
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/mkuhl">
-                    <img src="https://avatars.githubusercontent.com/u/61073?v=4" width="64;" alt="mkuhl"/>
-                    <br />
-                    <sub><b>Mike P. Kuhl</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/xcsf">
                     <img src="https://avatars.githubusercontent.com/u/43439835?v=4" width="64;" alt="xcsf"/>
                     <br />

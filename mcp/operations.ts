@@ -7,6 +7,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { bootstrapVault } from "../extensions/llm-wiki/lib/bootstrap.js";
 import { type ProjectionResult, rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
 import { searchWiki } from "../extensions/llm-wiki/lib/recall.js";
 import { saveInsight } from "../extensions/llm-wiki/lib/retro.js";
@@ -28,6 +29,40 @@ function projectionOutcome(
         ok: false,
         diagnostics: projection.diagnostics.map(({ code, message }) => ({ code, message })),
       };
+}
+
+/**
+ * Shared bootstrap operation: create (or update) the vault at `paths`.
+ *
+ * This is the one operation that must work when no vault exists — every other
+ * one fails closed naming it. `bootstrapVault` is pure Node (`node:fs`,
+ * `node:path` and sibling lib modules), so it needs no model and no
+ * credentials, which is what makes it fit the MCP surface.
+ *
+ * A failed projection rebuild is reported as diagnostics alongside `ok: true`:
+ * the vault has been written to disk by then, and `wiki_lint` is the repair
+ * path, so failing the call outright would misreport what happened.
+ */
+export async function bootstrapOperation(
+  paths: VaultPaths,
+  input: { topic: string; mode?: string },
+): Promise<
+  | { ok: true; created: boolean; diagnostics: Array<{ code: string; message: string }> }
+  | { ok: false; diagnostics: Array<{ code: string; message: string }> }
+> {
+  const result = bootstrapVault(paths, { topic: input.topic, mode: input.mode ?? "personal" });
+  if (!result.ok) {
+    return {
+      ok: false,
+      diagnostics: result.diagnostics.map(({ code, message }) => ({ code, message })),
+    };
+  }
+  const projection = projectionOutcome(result.projection);
+  return {
+    ok: true,
+    created: result.created,
+    diagnostics: projection.ok ? [] : projection.diagnostics,
+  };
 }
 
 /** Shared recall operation: calls searchWiki and appends vault diagnostics. */

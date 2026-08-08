@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { bootstrapVault } from "../extensions/llm-wiki/lib/bootstrap.js";
 import { rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
 import { searchWiki } from "../extensions/llm-wiki/lib/recall.js";
 import { saveInsight } from "../extensions/llm-wiki/lib/retro.js";
@@ -10,6 +11,7 @@ import { inspectVaultFormat } from "../extensions/llm-wiki/lib/vault-format.js";
 import { getWikiStatus, searchRegistry } from "../extensions/llm-wiki/lib/wiki-service.js";
 import { createExecApi } from "../mcp/exec.js";
 import {
+  bootstrapOperation,
   captureSourceOperation,
   recallOperation,
   retroOperation,
@@ -161,15 +163,79 @@ describe("MCP parity with shared services", () => {
     );
   });
 
-  it("exactly five tools registered", () => {
+  it("exactly six tools registered", () => {
     const source = readFileSync(join(import.meta.dirname, "..", "mcp", "index.ts"), "utf-8");
     const tools = [...source.matchAll(/server\.registerTool\(\s*"([^"]+)"/g)].map((m) => m[1]);
     expect(tools).toEqual([
+      "wiki_bootstrap",
       "wiki_recall",
       "wiki_search",
       "wiki_status",
       "wiki_retro",
       "wiki_capture_source",
     ]);
+  });
+
+  describe("bootstrap over MCP (issue #130)", () => {
+    it("creates the same vault the Pi tool does", async () => {
+      const mcpRoot = join(tmpDir, "mcp-bootstrapped");
+      const piRoot = join(tmpDir, "pi-bootstrapped");
+      mkdirSync(mcpRoot, { recursive: true });
+      mkdirSync(piRoot, { recursive: true });
+
+      const mcpResult = await bootstrapOperation(getVaultPaths(mcpRoot), { topic: "Parity" });
+      const piResult = bootstrapVault(getVaultPaths(piRoot), { topic: "Parity", mode: "personal" });
+
+      expect(mcpResult.ok).toBe(true);
+      expect(piResult.ok).toBe(true);
+      if (!mcpResult.ok) return;
+      expect(mcpResult.created).toBe(true);
+
+      // Same scaffolding, same config — one shared implementation.
+      const entries = (root: string) =>
+        readdirSync(join(root, ".llm-wiki"), { withFileTypes: true })
+          .map((entry) => `${entry.name}${entry.isDirectory() ? "/" : ""}`)
+          .sort();
+      expect(entries(mcpRoot)).toEqual(entries(piRoot));
+      expect(JSON.parse(readFileSync(join(mcpRoot, ".llm-wiki", "config.json"), "utf-8"))).toEqual(
+        JSON.parse(readFileSync(join(piRoot, ".llm-wiki", "config.json"), "utf-8")),
+      );
+    });
+
+    it("is safe to re-run and reports the vault as pre-existing", async () => {
+      const bootstrapRoot = join(tmpDir, "rerun");
+      mkdirSync(bootstrapRoot, { recursive: true });
+      const bootstrapPaths = getVaultPaths(bootstrapRoot);
+
+      await bootstrapOperation(bootstrapPaths, { topic: "First" });
+      const saved = await retroOperation(bootstrapPaths, "kept", "Kept Insight", "Body.");
+      expect(saved.ok).toBe(true);
+
+      const again = await bootstrapOperation(bootstrapPaths, { topic: "Second", mode: "company" });
+
+      expect(again.ok).toBe(true);
+      if (!again.ok) return;
+      expect(again.created).toBe(false);
+      // Re-running rewrites config but must not disturb existing pages.
+      const config = JSON.parse(readFileSync(join(bootstrapPaths.dotWiki, "config.json"), "utf-8"));
+      expect(config.mode).toBe("company");
+      expect(searchRegistry(bootstrapPaths, "Kept Insight").matches).toHaveLength(1);
+    });
+
+    it("leaves the other tools' fail-closed message actionable", async () => {
+      const freshRoot = join(tmpDir, "fresh");
+      mkdirSync(freshRoot, { recursive: true });
+      const freshPaths = getVaultPaths(freshRoot);
+
+      // Before bootstrap there is no vault to inspect...
+      expect(existsSync(join(freshPaths.dotWiki, "config.json"))).toBe(false);
+
+      await bootstrapOperation(freshPaths, { topic: "Fresh" });
+
+      // ...and afterwards the very tools that pointed at wiki_bootstrap work.
+      expect(existsSync(join(freshPaths.dotWiki, "config.json"))).toBe(true);
+      const status = await statusOperation(freshPaths);
+      expect(status.blockingDiagnostics).toEqual([]);
+    });
   });
 });

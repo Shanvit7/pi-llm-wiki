@@ -102,3 +102,41 @@ it("skips the toast and nextTurn report when the work has no summary", async () 
   expect(toasts).toEqual([]);
   expect(sent).toEqual([]);
 });
+
+it("captures ctx before await so a stale ctx proxy cannot break completion (issue #142)", async () => {
+  const toasts: Array<{ message: string; level: string | undefined }> = [];
+  const sent: Array<{ message: unknown; opts: { deliverAs?: string } }> = [];
+  const runtime = new Runtime();
+  runtime.pi = {
+    sendMessage: (message: unknown, opts: { deliverAs?: string }) => sent.push({ message, opts }),
+  } as unknown as ExtensionAPI;
+
+  // Simulate a stale extension ctx: property access throws once the
+  // background work is running (as after newSession/fork/switchSession/reload).
+  let stale = false;
+  const staleCtx = {
+    get hasUI() {
+      if (stale) throw new Error("stale ctx proxy");
+      return true;
+    },
+    get ui() {
+      if (stale) throw new Error("stale ctx proxy");
+      return {
+        notify: (message: string, level?: string) => {
+          toasts.push({ message, level });
+        },
+      };
+    },
+  };
+
+  await runtime.launchReported(staleCtx, "test:stale", async () => {
+    stale = true; // ctx goes stale while work is in flight
+    return "✅ done";
+  });
+  await runtime.awaitAll();
+
+  // Success toast still fires (captured before await) and no false failure toast.
+  expect(toasts).toEqual([{ message: "✅ done", level: "info" }]);
+  expect(sent).toHaveLength(1);
+  expect(sent[0].opts.deliverAs).toBe("nextTurn");
+});

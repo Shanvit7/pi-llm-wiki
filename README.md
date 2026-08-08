@@ -482,6 +482,13 @@ Thanks to everyone who has contributed! This list is regenerated automatically b
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/mkuhl">
+                    <img src="https://avatars.githubusercontent.com/u/61073?v=4" width="64;" alt="mkuhl"/>
+                    <br />
+                    <sub><b>Mike P. Kuhl</b></sub>
+                </a>
+            </td>
+            <td align="center">
                 <a href="https://github.com/CelestialCreator">
                     <img src="https://avatars.githubusercontent.com/u/177931942?v=4" width="64;" alt="CelestialCreator"/>
                     <br />
@@ -500,13 +507,6 @@ Thanks to everyone who has contributed! This list is regenerated automatically b
                     <img src="https://avatars.githubusercontent.com/u/136512?v=4" width="64;" alt="danielnaab"/>
                     <br />
                     <sub><b>Daniel Naab</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/mkuhl">
-                    <img src="https://avatars.githubusercontent.com/u/61073?v=4" width="64;" alt="mkuhl"/>
-                    <br />
-                    <sub><b>Mike P. Kuhl</b></sub>
                 </a>
             </td>
             <td align="center">

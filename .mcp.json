@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "llm-wiki-local": {
+      "command": "node",
+      "directTools": true,
+      "args": [
+        "/home/arjun/code/pi-packages/pi-llm-wiki/dist/mcp/index.js"
+      ],
+      "env": {
+        "WIKI_ROOT": "/tmp/pi-llm-wiki-mcp-test"
+      }
+    }
+  }
+}
